@@ -469,23 +469,18 @@ class RoomManager:
         # Начисление базовых очков за голосование зрителей и попадание в тайминг
         leaderboard = []
         for p in room.players.values():
-            if not p.assigned_role_id and not p.audio_url:
+            if not p.assigned_role_id and not p.audio_url and len(room.players) > 1:
                 continue
-
-            # Расчет очков: голоса зрителей * 200 + базовые за участие 500
-            total_score = (p.votes * 250) + 500 + random.randint(150, 450)
-            p.score = total_score
 
             leaderboard.append({
                 "player_id": p.player_id,
                 "nickname": p.nickname,
                 "avatar_id": p.avatar_id,
                 "votes": p.votes,
-                "score": p.score,
                 "role_id": p.assigned_role_id
             })
 
-        leaderboard.sort(key=lambda x: x["score"], reverse=True)
+        leaderboard.sort(key=lambda x: x["votes"], reverse=True)
         return {"leaderboard": leaderboard}
 
     def reset_to_lobby(self, room_code: str):

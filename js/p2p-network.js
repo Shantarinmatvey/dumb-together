@@ -400,17 +400,13 @@ export class HostP2PManager {
     const candidates = activePlayers.length > 0 ? activePlayers : Array.from(this.players.values());
 
     const leaderboard = candidates
-      .map(p => {
-        p.score = (p.votes * 250) + 500 + Math.floor(Math.random() * 250);
-        return {
-          playerId: p.playerId,
-          nickname: p.nickname,
-          avatarId: p.avatarId,
-          votes: p.votes,
-          score: p.score
-        };
-      })
-      .sort((a, b) => b.score - a.score);
+      .map(p => ({
+        playerId: p.playerId,
+        nickname: p.nickname,
+        avatarId: p.avatarId,
+        votes: p.votes || 0
+      }))
+      .sort((a, b) => b.votes - a.votes);
 
     this.broadcast('server:game:results', { leaderboard });
     this.broadcastRoomState();

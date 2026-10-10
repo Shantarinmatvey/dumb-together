@@ -854,6 +854,15 @@
       }
     };
 
+    function getVotesWord(n) {
+      const abs = Math.abs(n) % 100;
+      const rem = abs % 10;
+      if (abs > 10 && abs < 20) return 'голосов';
+      if (rem > 1 && rem < 5) return 'голоса';
+      if (rem === 1) return 'голос';
+      return 'голосов';
+    }
+
     // 12. РЕЗУЛЬТАТЫ
     function renderResults(leaderboard) {
       switchStage('RESULTS');
@@ -871,11 +880,13 @@
             <span class="text-2xl">${medals[i] || `#${i + 1}`}</span>
             <span class="text-3xl">${entry.avatarId || '🎙️'}</span>
             <div class="text-left">
-              <div class="font-bold text-slate-100 text-sm">${entry.nickname}</div>
-              <div class="text-xs text-pink-400">❤️ ${entry.votes} голосов зрителей</div>
+              <div class="font-bold text-slate-100 text-sm md:text-base">${entry.nickname}</div>
             </div>
           </div>
-          <div class="text-xl font-mono font-black text-amber-400">${entry.score} pts</div>
+          <div class="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-pink-500/15 border border-pink-500/30 text-pink-300 font-black text-sm md:text-base">
+            <span>❤️</span>
+            <span>${entry.votes || 0} ${getVotesWord(entry.votes || 0)} зрителей</span>
+          </div>
         `;
         grid.appendChild(item);
       });
