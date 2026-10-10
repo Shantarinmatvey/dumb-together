@@ -1,14 +1,14 @@
 /**
  * HostMultitrackMixer
  * Синхронный многоканальный Web Audio API плеер для главного экрана (Хоста).
- * Загружает, декодирует и одновременно воспроизводит дорожки всех игроков,
- * визуализируя персональные осциллограммы (Waveforms) на Canvas.
+ * Загружает, декодирует (из URL или ArrayBuffer) и одновременно воспроизводит
+ * дорожки всех игроков, визуализируя персональные осциллограммы (Waveforms) на Canvas.
  */
 export class HostMultitrackMixer {
   constructor() {
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
     this.audioCtx = new AudioContextClass();
-    this.tracks = new Map(); // playerId -> { buffer, source, analyser, dataArray, volumeNode }
+    this.tracks = new Map(); // playerId -> { audioBuffer, source, analyser, dataArray, volumeNode }
     this.isPlaying = false;
     this.animId = null;
   }
@@ -21,12 +21,22 @@ export class HostMultitrackMixer {
 
   /**
    * Предварительная загрузка и декодирование аудиодорожки игрока
+   * @param {string} playerId
+   * @param {string|ArrayBuffer} audioSource URL адрес или бинарный ArrayBuffer
    */
-  async loadTrack(playerId, audioUrl) {
+  async loadTrack(playerId, audioSource) {
     await this.ensureAudioUnlocked();
     try {
-      const response = await fetch(audioUrl);
-      const arrayBuffer = await response.arrayBuffer();
+      let arrayBuffer;
+      if (typeof audioSource === 'string') {
+        const response = await fetch(audioSource);
+        arrayBuffer = await response.arrayBuffer();
+      } else if (audioSource instanceof ArrayBuffer) {
+        arrayBuffer = audioSource.slice(0); // клонируем буфер
+      } else {
+        throw new Error('Неподдерживаемый формат аудио-источника');
+      }
+
       const audioBuffer = await this.audioCtx.decodeAudioData(arrayBuffer);
 
       const analyser = this.audioCtx.createAnalyser();
@@ -50,7 +60,7 @@ export class HostMultitrackMixer {
       console.log(`[HostMixer] Дорожка игрока ${playerId} успешно декодирована (${audioBuffer.duration.toFixed(2)}s)`);
       return true;
     } catch (e) {
-      console.error(`[HostMixer] Ошибка загрузки дорожки ${playerId}:`, e);
+      console.error(`[HostMixer] Ошибка декодирования дорожки ${playerId}:`, e);
       return false;
     }
   }
@@ -115,7 +125,7 @@ export class HostMultitrackMixer {
         const colX = idx * colWidth;
 
         // Фон колонки игрока
-        ctx.fillStyle = 'rgba(15, 23, 42, 0.4)';
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.45)';
         ctx.fillRect(colX + 4, 4, colWidth - 8, h - 8);
 
         // Имя и аватар игрока
@@ -140,7 +150,6 @@ export class HostMultitrackMixer {
             ctx.fillRect(bx, by, barWidth - 1, barH);
           }
         } else {
-          // Если дорожка еще не играет или загружается
           ctx.fillStyle = '#64748B';
           ctx.font = '12px sans-serif';
           ctx.fillText('Ожидание аудио...', colX + colWidth / 2, h / 2);

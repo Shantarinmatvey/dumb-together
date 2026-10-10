@@ -1,0 +1,98 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --color-bg: #0b0f19;
+  --color-surface: #131b2e;
+  --color-accent: #6366f1;
+  --color-neon-pink: #f43f5e;
+  --color-neon-cyan: #06b6d4;
+  --color-neon-green: #10b981;
+}
+
+* {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  background-color: var(--color-bg);
+  color: #f8fafc;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+  overflow-x: hidden;
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+
+/* Glassmorphism Card */
+.glass-card {
+  background: rgba(19, 27, 46, 0.75);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 1rem;
+}
+
+/* Neon Glows */
+.neon-glow-indigo {
+  box-shadow: 0 0 25px rgba(99, 102, 241, 0.4);
+}
+
+.neon-glow-pink {
+  box-shadow: 0 0 25px rgba(244, 63, 94, 0.4);
+}
+
+.neon-glow-green {
+  box-shadow: 0 0 25px rgba(16, 185, 129, 0.4);
+}
+
+/* Pulse animation */
+@keyframes pulse-ring {
+  0% { transform: scale(0.95); opacity: 0.8; }
+  50% { transform: scale(1.05); opacity: 1; }
+  100% { transform: scale(0.95); opacity: 0.8; }
+}
+
+.animate-pulse-slow {
+  animation: pulse-ring 2s infinite ease-in-out;
+}
+
+/* Recording Red Dot */
+.recording-indicator {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background-color: #ef4444;
+  box-shadow: 0 0 10px #ef4444;
+  animation: pulse-ring 1s infinite;
+}
+
+/* Flying Reaction Emojis */
+@keyframes flyUp {
+  0% {
+    transform: translateY(0) scale(0.8);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(-220px) scale(1.6);
+    opacity: 0;
+  }
+}
+
+.flying-emoji {
+  position: absolute;
+  pointer-events: none;
+  font-size: 2.5rem;
+  animation: flyUp 1.8s forwards cubic-bezier(0.1, 0.8, 0.3, 1);
+  z-index: 50;
+}
+
+/* VU Meter Bar */
+.vu-bar {
+  transition: width 0.08s ease-out;
+}

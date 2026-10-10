@@ -5,7 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Dumb Together — Экран Хоста</title>
   <script src="https://cdn.tailwindcss.com"></script>
-  <link rel="stylesheet" href="/static/css/style.css">
+  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <link rel="stylesheet" href="./css/style.css">
 </head>
 <body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col p-6 overflow-hidden relative">
 
@@ -17,7 +18,7 @@
         <h1 class="text-2xl font-black tracking-wider bg-gradient-to-r from-indigo-400 to-pink-500 bg-clip-text text-transparent">
           DUMB TOGETHER
         </h1>
-        <p class="text-xs text-slate-400">Главный экран трансляции</p>
+        <p class="text-xs text-slate-400">Главный экран трансляции • P2P Онлайн</p>
       </div>
     </div>
 
@@ -27,7 +28,7 @@
         <span class="text-xs font-semibold uppercase text-slate-400 tracking-wider">Код комнаты:</span>
         <span id="roomCodeDisplay" class="text-3xl font-mono font-black tracking-widest text-indigo-400">----</span>
       </div>
-      <div id="connStatus" class="w-3.5 h-3.5 rounded-full bg-amber-500 animate-pulse" title="Подключение..."></div>
+      <div id="connStatus" class="w-3.5 h-3.5 rounded-full bg-amber-500 animate-pulse" title="Подключение к сети..."></div>
     </div>
   </header>
 
@@ -39,14 +40,14 @@
     <!-- Left Column: QR and Instructions -->
     <div class="col-span-5 glass-card p-6 flex flex-col items-center justify-center text-center space-y-4">
       <h2 class="text-xl font-bold text-slate-200">Подключайтесь со смартфонов!</h2>
-      <p class="text-sm text-slate-400">Отсканируйте QR-код или откройте сайт и введите код комнаты</p>
+      <p class="text-sm text-slate-400">Отсканируйте QR-код или откройте ссылку и введите код комнаты</p>
       
       <div class="p-4 bg-white rounded-2xl shadow-2xl">
         <img id="qrCodeImg" class="w-56 h-56" alt="QR Code для подключения">
       </div>
 
-      <div class="text-center font-mono text-sm text-indigo-300 bg-slate-900/80 px-4 py-2 rounded-lg border border-slate-800">
-        <span id="joinUrlText">http://...</span>
+      <div class="text-center font-mono text-xs text-indigo-300 bg-slate-900/80 px-4 py-2 rounded-lg border border-slate-800 break-all max-w-full">
+        <span id="joinUrlText">Загрузка...</span>
       </div>
     </div>
 
@@ -57,7 +58,7 @@
           <h3 class="text-lg font-bold text-slate-200 flex items-center gap-2">
             <span>👥</span> Участники в комнате (<span id="playerCount">0</span>)
           </h3>
-          <span class="text-xs text-slate-400">Минимум: 1 игрок</span>
+          <span class="text-xs text-emerald-400 font-medium">✓ Онлайн через WebRTC P2P</span>
         </div>
 
         <!-- Players Grid -->
@@ -133,13 +134,13 @@
     <div class="text-5xl animate-bounce">🎧</div>
     <h2 class="text-3xl font-black text-white">Сведение аудиодорожек...</h2>
     <p class="text-slate-400 text-sm max-w-md">
-      Получаем записанные звуковые фрагменты от каждого смартфона и загружаем в микшер.
+      Получаем аудиодорожки напрямую от смартфонов по WebRTC DataChannel.
     </p>
 
     <div class="w-full max-w-md bg-slate-800 rounded-full h-4 overflow-hidden border border-slate-700">
-      <div id="uploadProgressBar" class="bg-gradient-to-r from-indigo-500 to-pink-500 h-full transition-all duration-300 w-1/4"></div>
+      <div id="uploadProgressBar" class="bg-gradient-to-r from-indigo-500 to-pink-500 h-full transition-all duration-300 w-2/3"></div>
     </div>
-    <div id="uploadStatusText" class="text-xs text-indigo-400 font-mono">Ожидание дорожек...</div>
+    <div id="uploadStatusText" class="text-xs text-indigo-400 font-mono">Ожидание передачи аудио...</div>
   </main>
 
   <!-- STAGE 5: PLAYBACK («КИНОЗАЛ») -->
@@ -189,28 +190,36 @@
 
   <!-- Logic Scripts -->
   <script type="module">
-    import { ClockSynchronizer } from '/static/js/time-sync.js';
-    import { CLIPS_METADATA, drawClipAnimation } from '/static/js/clips-data.js';
-    import { HostMultitrackMixer } from '/static/js/host-mixer.js';
+    import { CLIPS_METADATA, drawClipAnimation } from './js/clips-data.js';
+    import { HostMultitrackMixer } from './js/host-mixer.js';
+    import { HostP2PManager } from './js/p2p-network.js';
 
-    // Parse Room Code
+    function generateCode() {
+      const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+      let res = '';
+      for (let i = 0; i < 4; i++) res += chars.charAt(Math.floor(Math.random() * chars.length));
+      return res;
+    }
+
     const params = new URLSearchParams(window.location.search);
-    const roomCode = (params.get('room') || '----').toUpperCase();
-    document.getElementById('roomCodeDisplay').textContent = roomCode;
+    let roomCode = (params.get('room') || generateCode()).toUpperCase();
 
-    // QR Code URL
-    const joinUrl = `${window.location.origin}/static/controller.html?room=${roomCode}`;
-    document.getElementById('joinUrlText').textContent = joinUrl;
-    document.getElementById('qrCodeImg').src = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(joinUrl)}`;
-
-    let ws = null;
-    let clockSync = null;
+    let hostP2P = null;
     let mixer = new HostMultitrackMixer();
     let currentClip = CLIPS_METADATA[0];
-    let players = [];
     let stage = 'LOBBY';
 
-    // Render clip selector buttons
+    function setupUIForCode(code) {
+      document.getElementById('roomCodeDisplay').textContent = code;
+      const baseUrl = window.location.href.split('?')[0].replace('host.html', 'controller.html');
+      const joinUrl = `${baseUrl}?room=${code}`;
+      document.getElementById('joinUrlText').textContent = joinUrl;
+      document.getElementById('qrCodeImg').src = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(joinUrl)}`;
+    }
+
+    setupUIForCode(roomCode);
+
+    // Setup Clips Selector
     const clipSelector = document.getElementById('clipSelector');
     CLIPS_METADATA.forEach((clip, index) => {
       const btn = document.createElement('button');
@@ -226,41 +235,34 @@
       clipSelector.appendChild(btn);
     });
 
-    // WebSocket Setup
-    function initWebSocket() {
-      const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      ws = new WebSocket(`${proto}//${window.location.host}/ws/${roomCode}`);
-      clockSync = new ClockSynchronizer(ws);
+    function initNetwork(code) {
+      if (hostP2P) hostP2P.dispose();
 
-      ws.onopen = async () => {
-        document.getElementById('connStatus').className = 'w-3.5 h-3.5 rounded-full bg-emerald-500';
-        await clockSync.calibrate(6);
-
-        // Register as Host
-        ws.send(JSON.stringify({
-          event: 'client:room:join',
-          payload: {
-            roomCode,
-            nickname: 'HostScreen',
-            avatarId: '📺',
-            isHost: true
-          }
-        }));
-      };
-
-      ws.onclose = () => {
-        document.getElementById('connStatus').className = 'w-3.5 h-3.5 rounded-full bg-red-500 animate-pulse';
-        setTimeout(initWebSocket, 2000);
-      };
-
-      ws.onmessage = (event) => {
-        try {
-          const msg = JSON.parse(event.data);
-          handleServerEvent(msg.event, msg.payload);
-        } catch (e) {
-          console.error('WS parse error:', e);
+      hostP2P = new HostP2PManager(code, {
+        onStatusChange: (status) => {
+          const el = document.getElementById('connStatus');
+          if (status === 'connected') el.className = 'w-3.5 h-3.5 rounded-full bg-emerald-500';
+          else if (status === 'error') el.className = 'w-3.5 h-3.5 rounded-full bg-red-500 animate-pulse';
+        },
+        onCodeTaken: () => {
+          console.warn('Код комнаты занят, генерируем новый...');
+          roomCode = generateCode();
+          setupUIForCode(roomCode);
+          initNetwork(roomCode);
+        },
+        onReaction: (emoji) => {
+          triggerFloatingReaction(emoji);
+        },
+        onAllAudioReady: () => {
+          autoStartPlayback();
         }
+      });
+
+      hostP2P.onStateUpdate = (state) => {
+        updatePlayersUI(state.players);
       };
+
+      hostP2P.init();
     }
 
     function switchStage(newStage) {
@@ -277,37 +279,17 @@
       }
     }
 
-    function handleServerEvent(event, payload) {
-      if (event === 'server:room:state_update') {
-        players = payload.players || [];
-        updatePlayersUI();
-      } else if (event === 'server:game:role_assign') {
-        // Preview stage
-      } else if (event === 'server:game:start_recording') {
-        startRecordingCountdown(payload.startAtServerTimestamp, payload.durationMs, payload.countdownMs);
-      } else if (event === 'server:game:all_audio_ready') {
-        autoStartPlayback();
-      } else if (event === 'server:game:playback_start') {
-        runPlayback(payload);
-      } else if (event === 'server:game:reaction') {
-        triggerFloatingReaction(payload.emoji);
-      } else if (event === 'server:game:results') {
-        renderLeaderboard(payload.leaderboard);
-      }
-    }
-
-    function updatePlayersUI() {
-      const active = players.filter(p => !p.isHost);
-      document.getElementById('playerCount').textContent = active.length;
+    function updatePlayersUI(playersList) {
+      document.getElementById('playerCount').textContent = playersList.length;
       const grid = document.getElementById('playersGrid');
       grid.innerHTML = '';
 
-      if (active.length === 0) {
-        grid.innerHTML = `<div class="col-span-full py-8 text-center text-slate-500 text-sm">Ожидание подключения игроков...</div>`;
+      if (playersList.length === 0) {
+        grid.innerHTML = `<div class="col-span-full py-8 text-center text-slate-500 text-sm">Ожидание подключения со смартфонов...</div>`;
         return;
       }
 
-      active.forEach(p => {
+      playersList.forEach(p => {
         const card = document.createElement('div');
         card.className = 'glass-card p-3 flex items-center gap-3 border-slate-800';
         card.innerHTML = `
@@ -323,7 +305,6 @@
       });
     }
 
-    // Floating Emoji Reactions
     function triggerFloatingReaction(emoji) {
       const container = document.getElementById('reactionsOverlay');
       const el = document.createElement('div');
@@ -337,10 +318,7 @@
 
     // BUTTON: START ROUND
     document.getElementById('startRoundBtn').onclick = () => {
-      ws.send(JSON.stringify({
-        event: 'client:game:request_start_preview',
-        payload: { clipId: currentClip.clipId }
-      }));
+      hostP2P.startPreview(currentClip);
       showPreviewStage();
     };
 
@@ -361,7 +339,6 @@
         rolesList.appendChild(badge);
       });
 
-      // Animate preview canvas
       const canvas = document.getElementById('previewCanvas');
       const ctx = canvas.getContext('2d');
       const startTime = performance.now();
@@ -377,22 +354,19 @@
 
     // BUTTON: GO TO RECORDING
     document.getElementById('goToRecordingBtn').onclick = () => {
-      ws.send(JSON.stringify({
-        event: 'client:game:request_start_recording',
-        payload: { countdownMs: 3000 }
-      }));
+      const { startAtHost, durationMs } = hostP2P.startRecording(3000, currentClip.durationMs);
+      startRecordingCountdown(startAtHost, durationMs, 3000);
     };
 
-    function startRecordingCountdown(startAtServerMs, durationMs, countdownMs) {
+    function startRecordingCountdown(startAtHost, durationMs, countdownMs) {
       switchStage('RECORDING');
       document.getElementById('countdownBox').classList.remove('hidden');
       document.getElementById('recordingBox').classList.add('hidden');
 
       const numEl = document.getElementById('countdownNumber');
       const interval = setInterval(() => {
-        const clientNow = performance.now() + performance.timeOrigin;
-        const targetClientStart = clockSync.toClientTime(startAtServerMs);
-        const rem = Math.ceil((targetClientStart - clientNow) / 1000);
+        const now = performance.now() + performance.timeOrigin;
+        const rem = Math.ceil((startAtHost - now) / 1000);
 
         if (rem > 0) {
           numEl.textContent = rem;
@@ -402,27 +376,26 @@
           setTimeout(() => {
             document.getElementById('countdownBox').classList.add('hidden');
             document.getElementById('recordingBox').classList.remove('hidden');
-            startRecordingAnimation(targetClientStart, durationMs);
+            startRecordingAnimation(startAtHost, durationMs);
           }, 300);
         }
       }, 100);
     }
 
-    function startRecordingAnimation(startClientTime, durationMs) {
+    function startRecordingAnimation(startHostTime, durationMs) {
       const canvas = document.getElementById('recordingCanvas');
       const ctx = canvas.getContext('2d');
 
       function anim() {
         if (stage !== 'RECORDING') return;
         const now = performance.now() + performance.timeOrigin;
-        const elapsed = Math.max(0, now - startClientTime);
+        const elapsed = Math.max(0, now - startHostTime);
 
         drawClipAnimation(ctx, canvas.width, canvas.height, currentClip.clipId, elapsed, durationMs);
 
         if (elapsed < durationMs) {
           requestAnimationFrame(anim);
         } else {
-          // Recording completed, wait for audio uploads
           switchStage('MIXING');
         }
       }
@@ -433,32 +406,25 @@
       document.getElementById('uploadProgressBar').style.width = '100%';
       document.getElementById('uploadStatusText').textContent = 'Все дорожки получены! Запуск Кинозала...';
       setTimeout(() => {
-        ws.send(JSON.stringify({
-          event: 'client:game:request_playback',
-          payload: {}
-        }));
+        const { startAtHost, tracks } = hostP2P.startPlayback(1200);
+        runPlayback(tracks);
       }, 1200);
     }
 
-    async function runPlayback(payload) {
+    async function runPlayback(tracks) {
       switchStage('PLAYBACK');
-      const tracks = payload.tracks || [];
 
-      // Preload all audio tracks into HostMultitrackMixer
       for (const t of tracks) {
-        if (t.audioUrl) {
-          await mixer.loadTrack(t.playerId, t.audioUrl);
+        if (t.audioArrayBuffer) {
+          await mixer.loadTrack(t.playerId, t.audioArrayBuffer);
         }
       }
 
-      // Schedule playback
       mixer.playAllScheduled();
 
-      // Render waveforms on bottom canvas
       const waveCanvas = document.getElementById('waveformsCanvas');
       mixer.renderWaveforms(waveCanvas, tracks);
 
-      // Play video canvas animation
       const canvas = document.getElementById('playbackCanvas');
       const ctx = canvas.getContext('2d');
       const startClientTime = performance.now();
@@ -471,18 +437,14 @@
 
         if (elapsed < durationMs) {
           requestAnimationFrame(anim);
-        } else {
-          console.log('Playback complete');
         }
       }
       requestAnimationFrame(anim);
     }
 
     document.getElementById('goToResultsBtn').onclick = () => {
-      ws.send(JSON.stringify({
-        event: 'client:game:show_results',
-        payload: {}
-      }));
+      const leaderboard = hostP2P.calculateResults();
+      renderLeaderboard(leaderboard);
     };
 
     function renderLeaderboard(leaderboard) {
@@ -514,15 +476,11 @@
     }
 
     document.getElementById('nextRoundBtn').onclick = () => {
-      ws.send(JSON.stringify({
-        event: 'client:game:return_to_lobby',
-        payload: {}
-      }));
+      hostP2P.returnToLobby();
       switchStage('LOBBY');
     };
 
-    // Initialize
-    initWebSocket();
+    initNetwork(roomCode);
   </script>
 </body>
 </html>

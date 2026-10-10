@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>Dumb Together — Пати-игра в браузере</title>
   <script src="https://cdn.tailwindcss.com"></script>
-  <link rel="stylesheet" href="/static/css/style.css">
+  <link rel="stylesheet" href="./css/style.css">
 </head>
 <body class="flex flex-col items-center justify-center p-4">
 
@@ -19,7 +19,7 @@
         DUMB TOGETHER
       </h1>
       <p class="text-slate-400 text-sm">
-        Кооперативная озвучка безумных клипов с друзьями прямо в браузере
+        Кооперативная озвучка безумных клипов с друзьями онлайн прямо в браузере
       </p>
     </div>
 
@@ -72,8 +72,8 @@
 
     <!-- Quick instructions -->
     <div class="text-xs text-slate-500 space-y-1">
-      <p>💡 <b>Как играть:</b> Откройте экран Хоста на ТВ/ноутбуке, а друзья подключаются с телефонов по QR-коду.</p>
-      <p>Работает на iOS Safari, Android Chrome и ПК без установки приложений.</p>
+      <p>💡 <b>Как играть:</b> Создайте комнату на ТВ или ноутбуке, а друзья подключаются со смартфонов по QR-коду.</p>
+      <p>Работает онлайн через WebRTC P2P без установки приложений (iOS Safari, Android Chrome, ПК).</p>
     </div>
   </div>
 
@@ -97,10 +97,16 @@
       avatarPicker.appendChild(btn);
     });
 
-    // Check query params (e.g. ?room=ABCD)
     const urlParams = new URLSearchParams(window.location.search);
     if (urlParams.get('room')) {
       document.getElementById('roomCodeInput').value = urlParams.get('room').toUpperCase();
+    }
+
+    function generateCode() {
+      const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+      let res = '';
+      for (let i = 0; i < 4; i++) res += chars.charAt(Math.floor(Math.random() * chars.length));
+      return res;
     }
 
     document.getElementById('joinBtn').onclick = () => {
@@ -110,21 +116,12 @@
         alert('Пожалуйста, введите код комнаты');
         return;
       }
-      window.location.href = `/static/controller.html?room=${encodeURIComponent(room)}&nick=${encodeURIComponent(nick)}&avatar=${encodeURIComponent(selectedAvatar)}`;
+      window.location.href = `./controller.html?room=${encodeURIComponent(room)}&nick=${encodeURIComponent(nick)}&avatar=${encodeURIComponent(selectedAvatar)}`;
     };
 
-    document.getElementById('createHostBtn').onclick = async () => {
-      try {
-        const res = await fetch('/api/rooms', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ hostNickname: 'Главный Экран', avatarId: '📺' })
-        });
-        const data = await res.json();
-        window.location.href = `/static/host.html?room=${data.roomCode}`;
-      } catch (err) {
-        alert('Ошибка создания комнаты: ' + err.message);
-      }
+    document.getElementById('createHostBtn').onclick = () => {
+      const code = generateCode();
+      window.location.href = `./host.html?room=${code}`;
     };
   </script>
 </body>

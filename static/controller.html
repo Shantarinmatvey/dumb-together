@@ -5,7 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>Dumb Together — Пульт игрока</title>
   <script src="https://cdn.tailwindcss.com"></script>
-  <link rel="stylesheet" href="/static/css/style.css">
+  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <link rel="stylesheet" href="./css/style.css">
 </head>
 <body class="bg-slate-950 text-slate-100 flex flex-col justify-between p-4 min-h-screen select-none">
 
@@ -18,7 +19,7 @@
         <div class="text-[10px] text-slate-500 font-mono">КОМНАТА: <span id="roomCodeDisplay" class="text-indigo-400 font-bold">----</span></div>
       </div>
     </div>
-    <div id="wsIndicator" class="w-3 h-3 rounded-full bg-amber-500 animate-pulse" title="Подключение..."></div>
+    <div id="wsIndicator" class="w-3 h-3 rounded-full bg-amber-500 animate-pulse" title="Подключение к сети..."></div>
   </header>
 
   <!-- STAGE 1: MIC UNLOCK & CALIBRATION -->
@@ -30,7 +31,7 @@
     <div class="space-y-2">
       <h2 class="text-2xl font-black text-white">Включите микрофон</h2>
       <p class="text-xs text-slate-400 max-w-xs mx-auto">
-        Нажмите кнопку ниже, чтобы разрешить браузеру запись голоса и разблокировать звук
+        Нажмите кнопку ниже, чтобы разрешить запись звука и подключиться к главному экрану
       </p>
     </div>
 
@@ -118,13 +119,13 @@
 
   <!-- Footer status -->
   <footer class="pt-2 border-t border-slate-900 text-center text-[10px] text-slate-600">
-    Dumb Together Engine • Cross-platform Web Audio
+    Dumb Together Engine • WebRTC P2P Low-Latency
   </footer>
 
   <script type="module">
-    import { ClockSynchronizer } from '/static/js/time-sync.js';
-    import { BrowserAudioEngine } from '/static/js/audio-engine.js';
-    import { RhythmBarRenderer } from '/static/js/rhythm-bar.js';
+    import { BrowserAudioEngine } from './js/audio-engine.js';
+    import { RhythmBarRenderer } from './js/rhythm-bar.js';
+    import { ClientP2PManager } from './js/p2p-network.js';
 
     const params = new URLSearchParams(window.location.search);
     const roomCode = (params.get('room') || '').toUpperCase();
@@ -135,8 +136,7 @@
     document.getElementById('playerNickDisplay').textContent = nickname;
     document.getElementById('playerAvatarDisplay').textContent = avatar;
 
-    let ws = null;
-    let clockSync = null;
+    let clientP2P = null;
     let audioEngine = new BrowserAudioEngine();
     let rhythmRenderer = null;
     let currentRole = null;
@@ -154,60 +154,43 @@
       if (el) el.classList.remove('hidden');
     }
 
-    // Connect WebSocket
-    function initWebSocket() {
-      const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      ws = new WebSocket(`${proto}//${window.location.host}/ws/${roomCode}`);
-      clockSync = new ClockSynchronizer(ws);
-
-      ws.onopen = async () => {
-        document.getElementById('wsIndicator').className = 'w-3 h-3 rounded-full bg-emerald-500';
-        await clockSync.calibrate(6);
-
-        ws.send(JSON.stringify({
-          event: 'client:room:join',
-          payload: {
-            roomCode,
-            nickname,
-            avatarId: avatar,
-            isHost: false
-          }
-        }));
+    // Connect Network via PeerJS
+    function initP2P() {
+      clientP2P = new ClientP2PManager(roomCode, nickname, avatar);
+      clientP2P.onStatusChange = (status) => {
+        const ind = document.getElementById('wsIndicator');
+        if (status === 'connected') ind.className = 'w-3 h-3 rounded-full bg-emerald-500';
+        else if (status === 'disconnected') ind.className = 'w-3 h-3 rounded-full bg-amber-500 animate-pulse';
+        else ind.className = 'w-3 h-3 rounded-full bg-red-500';
       };
 
-      ws.onclose = () => {
-        document.getElementById('wsIndicator').className = 'w-3 h-3 rounded-full bg-red-500 animate-pulse';
-        setTimeout(initWebSocket, 2000);
-      };
-
-      ws.onmessage = (event) => {
-        try {
-          const msg = JSON.parse(event.data);
-          handleServerMessage(msg.event, msg.payload);
-        } catch (e) {
-          console.error('WS parse error:', e);
-        }
-      };
-    }
-
-    function handleServerMessage(event, payload) {
-      if (event === 'server:game:role_assign') {
+      clientP2P.on('server:game:role_assign', (payload) => {
         currentClip = payload.clip;
         currentRole = payload.role;
         setupRoleScreen();
-      } else if (event === 'server:game:start_recording') {
+      });
+
+      clientP2P.on('server:game:start_recording', (payload) => {
         runRecording(payload.startAtServerTimestamp, payload.durationMs, payload.countdownMs);
-      } else if (event === 'server:game:playback_start') {
+      });
+
+      clientP2P.on('server:game:playback_start', (payload) => {
         setupPlaybackScreen(payload.tracks);
-      } else if (event === 'server:room:state_update') {
+      });
+
+      clientP2P.on('server:room:state_update', (payload) => {
         if (payload.stage === 'LOBBY' && currentRole) {
           currentRole = null;
           showSection('stepWaiting');
         }
-      }
+      });
+
+      clientP2P.init().catch(err => {
+        alert('Не удалось подключиться к комнате ' + roomCode + '. Проверьте код комнаты.');
+      });
     }
 
-    // Step 1: Enable Mic Button
+    // Enable Mic Button
     document.getElementById('enableMicBtn').onclick = async () => {
       try {
         await audioEngine.initMicrophone((volume) => {
@@ -219,12 +202,8 @@
           }
         });
 
-        // Notify server
-        ws.send(JSON.stringify({
-          event: 'client:player:mic_ready',
-          payload: { ready: true }
-        }));
-
+        // Notify host
+        clientP2P.send('client:player:mic_ready', { ready: true });
         showSection('stepWaiting');
       } catch (err) {
         alert('Не удалось получить доступ к микрофону: ' + err.message);
@@ -245,12 +224,11 @@
       rhythmRenderer.setCues(cues, currentClip.durationMs);
     }
 
-    async function runRecording(startAtServerMs, durationMs, countdownMs) {
+    async function runRecording(startAtHostMs, durationMs, countdownMs) {
       showSection('stepRolePrompter');
-      const targetClientTime = clockSync.toClientTime(startAtServerMs);
+      const targetClientTime = clientP2P.toClientTime(startAtHostMs);
       const banner = document.getElementById('recStatusBanner');
 
-      // Countdown loop
       const countdownInterval = setInterval(() => {
         const now = performance.now() + performance.timeOrigin;
         const rem = Math.ceil((targetClientTime - now) / 1000);
@@ -264,7 +242,6 @@
         }
       }, 80);
 
-      // Start Rhythm Canvas
       rhythmRenderer.start(() => {
         const now = performance.now() + performance.timeOrigin;
         const elapsed = Math.max(0, now - targetClientTime);
@@ -273,30 +250,17 @@
       });
 
       try {
-        // Record audio
         const { blob, mimeType, actualStartDelayMs } = await audioEngine.recordScheduled(targetClientTime, durationMs);
         rhythmRenderer.stop();
 
         banner.className = 'py-3 px-4 rounded-xl text-center text-sm font-bold bg-indigo-600 text-white';
-        banner.textContent = 'Отправка дорожки на сервер... 🚀';
+        banner.textContent = 'Отправка дорожки на ТВ по P2P... 🚀';
 
-        // Upload to server
-        const audioUrl = await audioEngine.uploadAudio(blob, roomCode, nickname);
-
-        // Notify server via WS
-        ws.send(JSON.stringify({
-          event: 'client:game:audio_uploaded',
-          payload: {
-            roomCode,
-            audioUrl,
-            mimeType,
-            leadInOffsetMs: actualStartDelayMs,
-            durationMs
-          }
-        }));
+        // Send audio directly via WebRTC DataChannel!
+        await clientP2P.sendAudioTrack(blob, mimeType, actualStartDelayMs, durationMs);
 
         banner.className = 'py-3 px-4 rounded-xl text-center text-sm font-bold bg-emerald-600 text-white';
-        banner.textContent = '✓ Дорожка отправлена! Ждем Кинозал!';
+        banner.textContent = '✓ Дорожка доставлена! Ждем Кинозал!';
       } catch (err) {
         console.error('Recording error:', err);
         banner.textContent = 'Ошибка записи: ' + err.message;
@@ -307,32 +271,23 @@
       showSection('stepPlayback');
       hasVoted = false;
 
-      // Reactions buttons
       document.querySelectorAll('#emojiButtons button').forEach(btn => {
         btn.onclick = () => {
-          const emoji = btn.dataset.emoji;
-          ws.send(JSON.stringify({
-            event: 'client:game:reaction',
-            payload: { emoji }
-          }));
+          clientP2P.send('client:game:reaction', { emoji: btn.dataset.emoji });
         };
       });
 
-      // Voting buttons for other players
       const votingList = document.getElementById('votingList');
       votingList.innerHTML = '';
       (tracks || []).forEach(t => {
-        if (t.nickname === nickname) return; // Don't vote for self
+        if (t.nickname === nickname) return;
         const btn = document.createElement('button');
         btn.className = 'w-full py-2.5 px-4 bg-slate-900 border border-slate-700 hover:border-indigo-500 rounded-xl flex items-center justify-between text-sm font-bold transition';
         btn.innerHTML = `<span>${t.avatarId || '🎙️'} ${t.nickname}</span> <span class="text-xs text-indigo-400">Проголосовать ❤️</span>`;
         btn.onclick = () => {
           if (hasVoted) return;
           hasVoted = true;
-          ws.send(JSON.stringify({
-            event: 'client:game:vote',
-            payload: { targetPlayerId: t.playerId }
-          }));
+          clientP2P.send('client:game:vote', { targetPlayerId: t.playerId });
           btn.className = 'w-full py-2.5 px-4 bg-indigo-600/30 border border-indigo-500 rounded-xl flex items-center justify-between text-sm font-bold text-indigo-300';
           btn.innerHTML = `<span>${t.avatarId || '🎙️'} ${t.nickname}</span> <span>✓ Голос учтен!</span>`;
         };
@@ -340,8 +295,11 @@
       });
     }
 
-    // Init
-    initWebSocket();
+    if (roomCode) {
+      initP2P();
+    } else {
+      alert('Код комнаты не указан!');
+    }
   </script>
 </body>
 </html>
