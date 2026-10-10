@@ -120,6 +120,10 @@
         alert('Пожалуйста, укажите код комнаты');
         return;
       }
+      sessionStorage.setItem('isHost_' + room, 'false');
+      sessionStorage.setItem('lastRoom', room);
+      sessionStorage.setItem('lastNick', nick);
+      sessionStorage.setItem('lastAvatar', selectedAvatar);
       window.location.href = `./game.html?room=${encodeURIComponent(room)}&nick=${encodeURIComponent(nick)}&avatar=${encodeURIComponent(selectedAvatar)}&isHost=false`;
     };
 
@@ -127,6 +131,10 @@
     document.getElementById('createHostBtn').onclick = () => {
       const code = generateCode();
       const nick = getNickname();
+      sessionStorage.setItem('isHost_' + code, 'true');
+      sessionStorage.setItem('lastRoom', code);
+      sessionStorage.setItem('lastNick', nick);
+      sessionStorage.setItem('lastAvatar', selectedAvatar);
       window.location.href = `./game.html?room=${code}&nick=${encodeURIComponent(nick)}&avatar=${encodeURIComponent(selectedAvatar)}&isHost=true`;
     };
   </script>

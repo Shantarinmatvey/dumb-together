@@ -5,29 +5,35 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>Dumb Together — Игра</title>
   <script src="https://cdn.tailwindcss.com"></script>
-  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <!-- Локальный PeerJS для 100% стабильности без зависимости от unpkg/CDN -->
+  <script src="./js/peerjs.min.js"></script>
   <link rel="stylesheet" href="./css/style.css">
 </head>
 <body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col p-3 md:p-6 select-none relative overflow-x-hidden">
 
   <!-- Header -->
   <header class="flex justify-between items-center pb-3 mb-3 border-b border-slate-800">
-    <div class="flex items-center gap-2">
+    <div class="flex items-center gap-2 md:gap-3">
+      <!-- Back Button to Exit Room -->
+      <button id="exitRoomBtn" class="px-2.5 py-1.5 bg-slate-900 hover:bg-slate-800 border border-slate-700 rounded-xl text-xs font-bold text-slate-300 transition flex items-center gap-1">
+        <span>⬅</span> <span class="hidden sm:inline">Выйти</span>
+      </button>
+
       <span class="text-2xl md:text-3xl">🎭</span>
       <div>
-        <h1 class="text-lg md:text-xl font-black tracking-wider bg-gradient-to-r from-indigo-400 to-pink-500 bg-clip-text text-transparent">
+        <h1 class="text-base md:text-xl font-black tracking-wider bg-gradient-to-r from-indigo-400 to-pink-500 bg-clip-text text-transparent leading-none">
           DUMB TOGETHER
         </h1>
-        <div class="flex items-center gap-2 text-xs text-slate-400">
+        <div class="flex items-center gap-2 text-xs text-slate-400 mt-0.5">
           <span>КОМНАТА:</span>
           <span id="roomCodeText" class="font-mono font-bold text-indigo-400 tracking-widest text-sm">----</span>
-          <button id="copyLinkBtn" class="p-1 hover:text-white transition text-slate-500" title="Скопировать ссылку для друзей">📋</button>
+          <button id="copyLinkBtn" class="p-0.5 hover:text-white transition text-slate-400" title="Скопировать ссылку для друзей">📋</button>
         </div>
       </div>
     </div>
 
     <!-- Player profile & Net Status -->
-    <div class="flex items-center gap-3">
+    <div class="flex items-center gap-2 md:gap-3">
       <div class="flex items-center gap-2 bg-slate-900 border border-slate-800 px-3 py-1.5 rounded-xl">
         <span id="myAvatarDisplay" class="text-xl">🦊</span>
         <div class="text-left leading-tight">
@@ -59,18 +65,18 @@
       <div class="relative w-full h-16 bg-slate-950 rounded-xl border border-slate-800 overflow-hidden">
         <canvas id="lobbyDictaphoneCanvas" class="w-full h-full"></canvas>
         <div id="lobbyMicPlaceholder" class="absolute inset-0 flex items-center justify-center text-xs text-slate-500">
-          Нажмите кнопку ниже для разблокировки микрофона
+          Нажмите кнопку ниже для проверки микрофона
         </div>
       </div>
 
       <button id="enableMicBtn"
-        class="w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl transition flex items-center justify-center gap-2 text-sm">
+        class="w-full py-3.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl transition flex items-center justify-center gap-2 text-sm shadow-lg active:scale-98">
         <span>ВКЛЮЧИТЬ МИКРОФОН</span> 🎤
       </button>
     </div>
 
     <!-- Players in Room List -->
-    <div class="glass-card p-4 md:p-5 flex-1 flex flex-col justify-between">
+    <div class="glass-card p-4 md:p-5 flex-1 flex flex-col justify-between space-y-4">
       <div>
         <div class="flex justify-between items-center mb-3">
           <h2 class="text-base font-bold text-slate-200 flex items-center gap-2">
@@ -84,7 +90,7 @@
       </div>
 
       <!-- Host Controls or Guest Notice -->
-      <div class="mt-4 pt-4 border-t border-slate-800">
+      <div class="pt-4 border-t border-slate-800">
         <div id="hostControlsBox" class="space-y-3 hidden">
           <div>
             <label class="block text-xs font-semibold text-slate-400 mb-1.5 uppercase">Выберите сценку для озвучки:</label>
@@ -152,7 +158,7 @@
       <p class="text-sm text-slate-400">Приготовьтесь к озвучке своей части...</p>
     </div>
 
-    <!-- Live Recording Booth (Shown when recording starts) -->
+    <!-- Live Recording Booth -->
     <div id="recordingLiveBooth" class="w-full hidden flex-col space-y-3">
       <!-- Animated Scene on top -->
       <div class="relative rounded-2xl overflow-hidden shadow-2xl border border-slate-800 bg-slate-900 w-full aspect-video max-h-60">
@@ -181,7 +187,7 @@
         <div id="recordingPromptDisplay" class="text-base md:text-lg font-black text-amber-300">«...»</div>
       </div>
 
-      <!-- Replay Voice Preview Button (after recording fragment) -->
+      <!-- Replay Voice Preview Button -->
       <div id="replaySection" class="hidden flex items-center gap-2 pt-1">
         <button id="playLocalReplayBtn"
           class="flex-1 py-3 bg-indigo-600/30 hover:bg-indigo-600/50 border border-indigo-500 rounded-xl text-sm font-bold text-indigo-200 transition flex items-center justify-center gap-2">
@@ -283,22 +289,34 @@
     </div>
   </main>
 
-  <!-- Logic Scripts -->
+  <!-- Self-contained, robust script -->
   <script type="module">
     import { CLIPS_METADATA, drawClipAnimation, getActiveFragments } from './js/clips-data.js';
     import { BrowserAudioEngine } from './js/audio-engine.js';
     import { HostP2PManager, ClientP2PManager } from './js/p2p-network.js';
 
-    // Parse URL params
-    const params = new URLSearchParams(window.location.search);
-    const roomCode = (params.get('room') || 'WOLF').toUpperCase();
-    const nickname = params.get('nick') || 'Игрок';
-    const avatar = params.get('avatar') || '🦊';
-    const isHost = params.get('isHost') === 'true';
+    // 1. ПАРСИНГ ПАРАМЕТРОВ С ПРОВЕРКОЙ СЕССИИ
+    const urlParams = new URLSearchParams(window.location.search);
+    let roomCode = (urlParams.get('room') || sessionStorage.getItem('lastRoom') || 'WOLF').toUpperCase();
+    let nickname = urlParams.get('nick') || sessionStorage.getItem('lastNick') || 'Игрок ' + Math.floor(Math.random() * 90 + 10);
+    let avatar = urlParams.get('avatar') || sessionStorage.getItem('lastAvatar') || '🦊';
 
+    // Проверяем статус хоста из URL или sessionStorage
+    let isHost = urlParams.get('isHost') === 'true' || sessionStorage.getItem(`isHost_${roomCode}`) === 'true';
+
+    // Сохраняем в сессии для надежности
+    sessionStorage.setItem('lastRoom', roomCode);
+    sessionStorage.setItem('lastNick', nickname);
+    sessionStorage.setItem('lastAvatar', avatar);
+    if (isHost) {
+      sessionStorage.setItem(`isHost_${roomCode}`, 'true');
+    }
+
+    // 2. СИНХРОННАЯ ИНИЦИАЛИЗАЦИЯ ИНТЕРФЕЙСА (НЕ ЗАВИСИТ ОТ СЕТИ)
     document.getElementById('roomCodeText').textContent = roomCode;
     document.getElementById('myNickDisplay').textContent = nickname;
     document.getElementById('myAvatarDisplay').textContent = avatar;
+
     if (isHost) {
       document.getElementById('hostBadge').classList.remove('hidden');
       document.getElementById('hostControlsBox').classList.remove('hidden');
@@ -308,33 +326,72 @@
       document.getElementById('finishVotingEarlyBtn').classList.remove('hidden');
       document.getElementById('nextRoundBtn').classList.remove('hidden');
     } else {
+      document.getElementById('hostBadge').classList.add('hidden');
+      document.getElementById('hostControlsBox').classList.add('hidden');
+      document.getElementById('guestWaitingBox').classList.remove('hidden');
       document.getElementById('guestWaitRecordingNotice').classList.remove('hidden');
       document.getElementById('guestWaitVotingNotice').classList.remove('hidden');
       document.getElementById('guestWaitNextRoundNotice').classList.remove('hidden');
     }
 
-    // Copy link
-    document.getElementById('copyLinkBtn').onclick = () => {
-      const url = `${window.location.origin}${window.location.pathname.replace('game.html', 'index.html')}?room=${roomCode}`;
-      navigator.clipboard.writeText(url).then(() => alert('Ссылка скопирована! Отправьте её друзьям.'));
+    // Кнопка выхода в меню
+    document.getElementById('exitRoomBtn').onclick = () => {
+      if (confirm('Вы уверены, что хотите выйти из комнаты?')) {
+        sessionStorage.removeItem(`isHost_${roomCode}`);
+        if (p2p) p2p.dispose();
+        if (audioEngine) audioEngine.dispose();
+        window.location.href = './index.html';
+      }
     };
 
-    let p2p = null;
-    let audioEngine = new BrowserAudioEngine();
-    let currentClip = CLIPS_METADATA[0];
-    let myFragment = null;
-    let allFragments = [];
-    let players = [];
-    let stage = 'LOBBY';
-    let hasVoted = false;
-    let previewAudio = null;
+    // Кнопка копирования ссылки
+    document.getElementById('copyLinkBtn').onclick = () => {
+      const url = `${window.location.origin}${window.location.pathname.replace('game.html', 'index.html')}?room=${roomCode}`;
+      navigator.clipboard.writeText(url).then(() => {
+        alert('Ссылка скопирована! Отправьте её друзьям: ' + url);
+      }).catch(() => {
+        prompt('Скопируйте ссылку вручную:', url);
+      });
+    };
 
-    // Render Clip Choices for Host
+    // 3. ЛОКАЛЬНЫЙ СПИСОК ИГРОКОВ (СЕБЯ ПОКАЗЫВАЕМ СРАЗУ!)
+    let players = [{
+      playerId: isHost ? 'host' : 'me',
+      nickname: nickname,
+      avatarId: avatar,
+      isHost: isHost,
+      micReady: false
+    }];
+
+    function renderPlayers() {
+      document.getElementById('playerCount').textContent = players.length;
+      const list = document.getElementById('playersList');
+      list.innerHTML = '';
+
+      players.forEach(p => {
+        const item = document.createElement('div');
+        item.className = 'glass-card p-2.5 flex items-center gap-2 border-slate-800';
+        item.innerHTML = `
+          <span class="text-2xl">${p.avatarId || '🎙️'}</span>
+          <div class="truncate">
+            <div class="text-xs font-bold text-slate-200 truncate">${p.nickname} ${p.isHost ? '👑' : ''}</div>
+            <div class="text-[10px] ${p.micReady ? 'text-emerald-400' : 'text-amber-400'}">
+              ${p.micReady ? '✓ Микрофон готов' : '● Проверка...'}
+            </div>
+          </div>
+        `;
+        list.appendChild(item);
+      });
+    }
+    renderPlayers();
+
+    // 4. ВЫБОР СЦЕНКИ ДЛЯ ХОСТА
+    let currentClip = CLIPS_METADATA[0];
     const clipChoicesContainer = document.getElementById('clipChoices');
     CLIPS_METADATA.forEach((clip, i) => {
       const btn = document.createElement('button');
       btn.className = `p-2.5 text-left rounded-xl border text-xs transition ${i === 0 ? 'border-indigo-500 bg-indigo-500/20 text-white' : 'border-slate-800 bg-slate-900/40 text-slate-400'}`;
-      btn.innerHTML = `<div class="font-bold truncate">${clip.title}</div><div class="text-[10px] text-slate-500">12 сек</div>`;
+      btn.innerHTML = `<div class="font-bold truncate">${clip.title}</div><div class="text-[10px] text-slate-500">${(clip.totalDurationMs || 12000) / 1000} сек</div>`;
       btn.onclick = () => {
         currentClip = clip;
         Array.from(clipChoicesContainer.children).forEach(b => {
@@ -345,26 +402,39 @@
       clipChoicesContainer.appendChild(btn);
     });
 
-    // Mic Unlock Button
+    // 5. МИКРОФОН И ДИКТОФОН
+    let audioEngine = new BrowserAudioEngine();
+    let isMicActive = false;
+
     document.getElementById('enableMicBtn').onclick = async () => {
       try {
         await audioEngine.initMicrophone();
+        isMicActive = true;
         document.getElementById('lobbyMicPlaceholder').classList.add('hidden');
         document.getElementById('micStatusBadge').textContent = '✓ Микрофон активен';
         document.getElementById('micStatusBadge').className = 'text-xs px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30';
+        document.getElementById('enableMicBtn').textContent = '✓ Микрофон работает отлично!';
+        document.getElementById('enableMicBtn').className = 'w-full py-3.5 bg-emerald-700 text-emerald-100 font-bold rounded-xl text-sm';
 
+        // Запуск анимации диктофона на Canvas
         const canvas = document.getElementById('lobbyDictaphoneCanvas');
         audioEngine.startDecibelVisualizer(canvas);
 
+        // Обновляем статус микрофона у себя
+        players[0].micReady = true;
+        renderPlayers();
+
+        // Уведомляем сеть
         if (!isHost && p2p) {
           p2p.send('client:player:mic_ready', { ready: true });
         }
       } catch (err) {
-        alert('Не удалось включить микрофон: ' + err.message);
+        alert('Не удалось включить микрофон: ' + err.message + '\nУбедитесь, что вы разрешили доступ к микрофону в браузере.');
       }
     };
 
-    // Stage Switcher
+    // 6. ПЕРЕКЛЮЧЕНИЕ ЭКРАНОВ
+    let stage = 'LOBBY';
     function switchStage(newStage) {
       stage = newStage;
       ['Lobby', 'Preview', 'Recording', 'Playback', 'Voting', 'Results'].forEach(s => {
@@ -375,7 +445,13 @@
       if (target) target.classList.remove('hidden');
     }
 
-    // Network Initialization
+    // 7. СЕТЕВОЙ ДВИЖОК WEBRTC P2P
+    let p2p = null;
+    let myFragment = null;
+    let allFragments = [];
+    let previewAudio = null;
+    let hasVoted = false;
+
     function initNetwork() {
       if (isHost) {
         p2p = new HostP2PManager(roomCode, nickname, avatar, {
@@ -392,12 +468,16 @@
             setupPreviewScreen();
           },
           onAllAudioReady: () => {
-            console.log('Все аудиодорожки получены! Запуск Кинозала...');
-            setTimeout(autoStartPlayback, 800);
+            console.log('Все аудио получены, запускаем Кинозал...');
+            setTimeout(autoStartPlayback, 600);
           },
           onStateUpdate: (state) => {
             players = state.players || [];
-            updatePlayersLobby();
+            // Гарантируем, что хост с микрофоном виден
+            if (isMicActive && players.length > 0 && players[0].isHost) {
+              players[0].micReady = true;
+            }
+            renderPlayers();
           },
           onVotingTick: (sec) => {
             document.getElementById('votingTimerText').textContent = `${sec}с`;
@@ -414,7 +494,7 @@
 
         p2p.on('server:room:state_update', (state) => {
           players = state.players || [];
-          updatePlayersLobby();
+          renderPlayers();
           if (state.stage === 'LOBBY' && stage !== 'LOBBY') {
             switchStage('LOBBY');
           }
@@ -451,28 +531,7 @@
       }
     }
 
-    function updatePlayersLobby() {
-      document.getElementById('playerCount').textContent = players.length;
-      const list = document.getElementById('playersList');
-      list.innerHTML = '';
-
-      players.forEach(p => {
-        const item = document.createElement('div');
-        item.className = 'glass-card p-2.5 flex items-center gap-2 border-slate-800';
-        item.innerHTML = `
-          <span class="text-2xl">${p.avatarId || '🎙️'}</span>
-          <div class="truncate">
-            <div class="text-xs font-bold text-slate-200 truncate">${p.nickname} ${p.isHost ? '👑' : ''}</div>
-            <div class="text-[10px] ${p.micReady ? 'text-emerald-400' : 'text-amber-400'}">
-              ${p.micReady ? '✓ Микрофон готов' : '● Проверка...'}
-            </div>
-          </div>
-        `;
-        list.appendChild(item);
-      });
-    }
-
-    // Floating Emojis
+    // Реакции (Эмодзи)
     function triggerEmojiReaction(emoji) {
       const container = document.getElementById('reactionsLayer');
       const el = document.createElement('div');
@@ -484,7 +543,6 @@
       setTimeout(() => el.remove(), 1800);
     }
 
-    // Emoji clicks
     document.querySelectorAll('#emojiButtons button').forEach(b => {
       b.onclick = () => {
         const emoji = b.dataset.emoji;
@@ -497,12 +555,11 @@
       };
     });
 
-    // 1. HOST: START ROUND
+    // 8. СТАРТ ИГРЫ (ХОСТ)
     document.getElementById('startRoundBtn').onclick = () => {
       p2p.startPreview(currentClip);
     };
 
-    // 2. SETUP PREVIEW SCREEN
     function setupPreviewScreen() {
       switchStage('PREVIEW');
       document.getElementById('previewClipTitle').textContent = currentClip.title;
@@ -514,7 +571,6 @@
         document.getElementById('myPromptText').textContent = myFragment.textPrompt;
       }
 
-      // Fragments list
       const timelineBox = document.getElementById('fragmentsTimelinePreview');
       timelineBox.innerHTML = '';
       (allFragments || []).forEach((f, idx) => {
@@ -525,7 +581,6 @@
         timelineBox.appendChild(card);
       });
 
-      // Animate preview canvas
       const canvas = document.getElementById('previewCanvas');
       const ctx = canvas.getContext('2d');
       const startTime = performance.now();
@@ -540,7 +595,7 @@
       anim();
     }
 
-    // 3. HOST: GO TO RECORDING
+    // 9. ПЕРЕХОД К ЗАПИСИ
     document.getElementById('goToRecordingBtn').onclick = () => {
       p2p.startRecording(3000);
       startRecordingFlow(
@@ -551,7 +606,6 @@
       );
     };
 
-    // 4. SYNCHRONOUS RECORDING FLOW
     async function startRecordingFlow(startAtServerMs, totalDurationMs, countdownMs, fragments) {
       switchStage('RECORDING');
       document.getElementById('recordingCountdownOverlay').classList.remove('hidden');
@@ -560,7 +614,6 @@
 
       const targetClientTime = isHost ? startAtServerMs : p2p.toClientTime(startAtServerMs);
 
-      // Countdown loop 3..2..1
       const countEl = document.getElementById('countdownNumberText');
       const countInterval = setInterval(() => {
         const now = performance.now() + performance.timeOrigin;
@@ -586,17 +639,17 @@
       const dictCanvas = document.getElementById('recordingDictaphoneCanvas');
       const dbText = document.getElementById('liveDbText');
 
-      // Start live Dictaphone Decibel Visualizer!
+      // Диктофонная анимация уровня децибел
       audioEngine.startDecibelVisualizer(dictCanvas, (vol) => {
         const dbVal = vol > 0 ? -Math.round((100 - vol) * 0.4) : -50;
-        dbText.textContent = `${dbVal} dB (Громкость: ${vol}%)`;
+        dbText.textContent = `${dbVal} dB (Уровень: ${vol}%)`;
       });
 
       const banner = document.getElementById('turnBanner');
       const bannerText = document.getElementById('turnBannerText');
+      document.getElementById('recordingPromptDisplay').textContent = myFragment ? myFragment.textPrompt : '...';
 
       let hasRecordedMyPart = false;
-      let recordedBlobData = null;
 
       function renderFrame() {
         if (stage !== 'RECORDING') return;
@@ -605,10 +658,7 @@
 
         drawClipAnimation(sceneCtx, sceneCanvas.width, sceneCanvas.height, currentClip.clipId, elapsed, totalDurationMs);
 
-        // Find active fragment right now
         const activeFrag = fragments.find(f => elapsed >= f.startMs && elapsed < f.endMs) || fragments[fragments.length - 1];
-
-        // Is it MY turn?
         const isMyTurn = myFragment && activeFrag && activeFrag.fragmentId === myFragment.fragmentId;
 
         if (isMyTurn) {
@@ -616,25 +666,22 @@
           banner.className = 'p-3.5 rounded-xl text-center text-sm font-bold border flex items-center justify-center gap-2 bg-red-600/30 border-red-500 text-red-200 animate-pulse';
           bannerText.innerHTML = `🔴 <b>ТВОЯ ОЧЕРЕДЬ! ГОВОРИ В МИКРОФОН!</b> (${remSec}с)`;
 
-          // Trigger MediaRecorder if not yet recorded
           if (!hasRecordedMyPart) {
             hasRecordedMyPart = true;
             const myDuration = myFragment.endMs - myFragment.startMs;
             const myClientStartTime = startTime + myFragment.startMs;
 
             audioEngine.recordScheduled(myClientStartTime, myDuration).then(async (result) => {
-              recordedBlobData = result;
-              console.log('Мой фрагмент записан, отправка...');
+              console.log('Фрагмент записан успешно!');
               document.getElementById('replaySection').classList.remove('hidden');
 
-              // Send track to Host / Save locally
               const arrayBuffer = await result.blob.arrayBuffer();
               if (isHost) {
                 p2p.submitHostAudio(arrayBuffer, result.mimeType, result.audioUrl);
               } else {
                 p2p.sendAudioTrack(result.blob, result.mimeType, myDuration);
               }
-            }).catch(e => console.error('Rec error:', e));
+            }).catch(e => console.error(e));
           }
         } else {
           if (elapsed < (myFragment ? myFragment.startMs : 0)) {
@@ -656,12 +703,12 @@
       requestAnimationFrame(renderFrame);
     }
 
-    // Local Voice Replay button
+    // Повтор записи (прослушать себя)
     document.getElementById('playLocalReplayBtn').onclick = () => {
       audioEngine.playLocalPreview();
     };
 
-    // 5. CINEMA HALL PLAYBACK
+    // 10. КИНОЗАЛ
     function autoStartPlayback() {
       const { startAtHost, tracks } = p2p.startPlayback(1000);
       runPlayback({ playbackStartAtServerTimestamp: startAtHost, clip: currentClip, tracks });
@@ -677,7 +724,6 @@
       const tracks = payload.tracks || [];
       const totalDur = (allFragments.length || 3) * 4000;
 
-      // Play audio elements for each player track
       tracks.forEach(t => {
         if (t.audioBlobUrl && t.fragment) {
           setTimeout(() => {
@@ -692,10 +738,9 @@
         const elapsed = performance.now() - startClientTime;
         drawClipAnimation(sceneCtx, sceneCanvas.width, sceneCanvas.height, currentClip.clipId, elapsed, totalDur);
 
-        // Update speaker spotlight
         const activeTrack = tracks.find(t => t.fragment && elapsed >= t.fragment.startMs && elapsed < t.fragment.endMs);
         if (activeTrack) {
-          spotlight.innerHTML = `🔊 <b>ОЗВУЧИВАЕТ:</b> ${activeTrack.avatarId || '🎙️'} <span class="text-indigo-400">${activeTrack.nickname}</span> (${activeTrack.fragment.characterName})`;
+          spotlight.innerHTML = `🔊 <b>ОЗВУЧИВАЕТ:</b> ${activeTrack.avatarId || '🎙️'} <span class="text-indigo-400 font-bold">${activeTrack.nickname}</span> (${activeTrack.fragment.characterName})`;
         } else {
           spotlight.textContent = '🍿 Финал сценки!';
         }
@@ -707,7 +752,7 @@
       requestAnimationFrame(anim);
     }
 
-    // 6. VOTING (30 SECONDS + FINISH EARLY)
+    // 11. ГОЛОСОВАНИЕ
     document.getElementById('goToVotingBtn').onclick = () => {
       p2p.startVoting();
     };
@@ -740,7 +785,6 @@
           </button>
         `;
 
-        // Audio replay button
         const playBtn = card.querySelector('.playTrackBtn');
         if (playBtn && t.audioBlobUrl) {
           playBtn.onclick = () => {
@@ -750,7 +794,6 @@
           };
         }
 
-        // Vote button
         const voteBtn = card.querySelector('.voteBtn');
         if (voteBtn && !isSelf) {
           voteBtn.onclick = () => {
@@ -771,12 +814,11 @@
       });
     }
 
-    // Finish Voting Early (Host only)
     document.getElementById('finishVotingEarlyBtn').onclick = () => {
       p2p.finishVotingEarly();
     };
 
-    // 7. RESULTS SCREEN
+    // 12. РЕЗУЛЬТАТЫ
     function renderResults(leaderboard) {
       switchStage('RESULTS');
       if (previewAudio) previewAudio.pause();
@@ -803,13 +845,12 @@
       });
     }
 
-    // Next Round (Host only)
     document.getElementById('nextRoundBtn').onclick = () => {
       p2p.returnToLobby();
       switchStage('LOBBY');
     };
 
-    // Initialize
+    // Запуск сети
     initNetwork();
   </script>
 </body>
