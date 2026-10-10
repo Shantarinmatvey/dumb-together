@@ -481,6 +481,12 @@
           },
           onVotingTick: (sec) => {
             document.getElementById('votingTimerText').textContent = `${sec}с`;
+          },
+          onVotingStart: (tracks) => {
+            setupVotingScreen(tracks);
+          },
+          onResults: (leaderboard) => {
+            renderResults(leaderboard);
           }
         });
         p2p.init();
@@ -517,6 +523,10 @@
 
         p2p.on('server:game:start_voting', (payload) => {
           setupVotingScreen(payload.tracks);
+        });
+
+        p2p.on('server:game:voting_tick', (payload) => {
+          document.getElementById('votingTimerText').textContent = `${payload.sec}с`;
         });
 
         p2p.on('server:game:reaction', (payload) => {
@@ -754,19 +764,38 @@
 
     // 11. ГОЛОСОВАНИЕ
     document.getElementById('goToVotingBtn').onclick = () => {
-      p2p.startVoting();
+      if (isHost && p2p) {
+        const tracks = p2p.startVoting();
+        setupVotingScreen(tracks);
+      }
     };
 
     function setupVotingScreen(tracks) {
       switchStage('VOTING');
       hasVoted = false;
 
+      // Сброс таймера на 30с
+      document.getElementById('votingTimerText').textContent = '30с';
+
       const grid = document.getElementById('votingCardsGrid');
       grid.innerHTML = '';
+
+      if (!tracks || tracks.length === 0) {
+        tracks = players.map(p => ({
+          playerId: p.playerId,
+          nickname: p.nickname,
+          avatarId: p.avatarId,
+          audioBlobUrl: p.audioBlobUrl || null,
+          fragment: p.assignedFragment || { characterName: 'Участник' }
+        }));
+      }
+
+      const isSinglePlayer = (tracks.length <= 1);
 
       (tracks || []).forEach(t => {
         const card = document.createElement('div');
         const isSelf = t.nickname === nickname;
+        const canVote = !isSelf || isSinglePlayer;
         card.className = 'glass-card p-3.5 flex flex-col justify-between border-slate-800 space-y-2';
 
         card.innerHTML = `
@@ -780,8 +809,8 @@
             </div>
             ${t.audioBlobUrl ? `<button class="playTrackBtn px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-xs font-bold text-slate-200">▶ Послушать</button>` : ''}
           </div>
-          <button class="voteBtn w-full py-2 bg-gradient-to-r from-pink-600 to-indigo-600 hover:from-pink-500 hover:to-indigo-500 rounded-xl text-xs font-bold transition disabled:opacity-40" ${isSelf ? 'disabled' : ''}>
-            ${isSelf ? 'Нельзя голосовать за себя' : '❤️ Проголосовать за эту озвучку'}
+          <button class="voteBtn w-full py-2 bg-gradient-to-r from-pink-600 to-indigo-600 hover:from-pink-500 hover:to-indigo-500 rounded-xl text-xs font-bold transition disabled:opacity-40" ${canVote ? '' : 'disabled'}>
+            ${canVote ? (isSinglePlayer ? '❤️ Проголосовать (соло-тест)' : '❤️ Проголосовать за эту озвучку') : 'Нельзя голосовать за себя'}
           </button>
         `;
 
@@ -795,13 +824,17 @@
         }
 
         const voteBtn = card.querySelector('.voteBtn');
-        if (voteBtn && !isSelf) {
+        if (voteBtn && canVote) {
           voteBtn.onclick = () => {
             if (hasVoted) return;
             hasVoted = true;
             if (isHost) {
               const target = p2p.players.get(t.playerId);
-              if (target) { target.votes += 1; p2p.broadcastRoomState(); p2p.checkAllVoted(); }
+              if (target) {
+                target.votes += 1;
+                p2p.broadcastRoomState();
+                p2p.checkAllVoted();
+              }
             } else {
               p2p.send('client:game:vote', { targetPlayerId: t.playerId });
             }
@@ -815,7 +848,10 @@
     }
 
     document.getElementById('finishVotingEarlyBtn').onclick = () => {
-      p2p.finishVotingEarly();
+      if (isHost && p2p) {
+        const leaderboard = p2p.finishVotingEarly();
+        renderResults(leaderboard);
+      }
     };
 
     // 12. РЕЗУЛЬТАТЫ

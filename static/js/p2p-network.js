@@ -42,6 +42,8 @@ export class HostP2PManager {
     this.onHostAssigned = options.onHostAssigned || (() => {});
     this.onStateUpdate = options.onStateUpdate || (() => {});
     this.onVotingTick = options.onVotingTick || (() => {});
+    this.onVotingStart = options.onVotingStart || (() => {});
+    this.onResults = options.onResults || (() => {});
 
     // Регистрируем ХОСТА как первого полноценного игрока в комнате!
     this.players.set('host', {
@@ -348,13 +350,13 @@ export class HostP2PManager {
     this.votingTimeRemaining = 30;
 
     const tracks = Array.from(this.players.values())
-      .filter(p => p.hasAudio)
+      .filter(p => p.assignedFragment || this.players.size === 1)
       .map(p => ({
         playerId: p.playerId,
         nickname: p.nickname,
         avatarId: p.avatarId,
-        audioBlobUrl: p.audioBlobUrl,
-        fragment: p.assignedFragment
+        audioBlobUrl: p.audioBlobUrl || null,
+        fragment: p.assignedFragment || { characterName: 'Участник' }
       }));
 
     this.broadcast('server:game:start_voting', {
@@ -363,15 +365,21 @@ export class HostP2PManager {
     });
     this.broadcastRoomState();
 
+    // Оповещаем локального хоста
+    this.onVotingStart(tracks);
+
     if (this.votingTimer) clearInterval(this.votingTimer);
     this.votingTimer = setInterval(() => {
       this.votingTimeRemaining--;
       this.onVotingTick(this.votingTimeRemaining);
+      this.broadcast('server:game:voting_tick', { sec: this.votingTimeRemaining });
 
       if (this.votingTimeRemaining <= 0) {
         this.finishVotingEarly();
       }
     }, 1000);
+
+    return tracks;
   }
 
   finishVotingEarly() {
@@ -379,13 +387,19 @@ export class HostP2PManager {
       clearInterval(this.votingTimer);
       this.votingTimer = null;
     }
-    this.calculateResults();
+    const leaderboard = this.calculateResults();
+    this.onResults(leaderboard);
+    return leaderboard;
   }
 
   calculateResults() {
     this.stage = 'RESULTS';
-    const leaderboard = Array.from(this.players.values())
-      .filter(p => p.assignedFragment)
+    const activePlayers = Array.from(this.players.values())
+      .filter(p => p.assignedFragment || this.players.size === 1);
+
+    const candidates = activePlayers.length > 0 ? activePlayers : Array.from(this.players.values());
+
+    const leaderboard = candidates
       .map(p => {
         p.score = (p.votes * 250) + 500 + Math.floor(Math.random() * 250);
         return {
@@ -400,6 +414,7 @@ export class HostP2PManager {
 
     this.broadcast('server:game:results', { leaderboard });
     this.broadcastRoomState();
+    this.onResults(leaderboard);
     return leaderboard;
   }
 
