@@ -438,15 +438,26 @@
     let audioEngine = new BrowserAudioEngine();
     let isMicActive = false;
 
-    document.getElementById('enableMicBtn').onclick = async () => {
+    async function activateMicrophone(useMock = false) {
+      const btn = document.getElementById('enableMicBtn');
+      btn.disabled = true;
+      btn.className = 'w-full py-3.5 bg-amber-600 text-amber-100 font-bold rounded-xl text-sm transition animate-pulse flex items-center justify-center gap-2 cursor-wait';
+      btn.innerHTML = '<span>⏳ Запрашиваем доступ к микрофону...</span>';
+
       try {
-        await audioEngine.initMicrophone();
+        if (useMock) {
+          audioEngine.initMockMicrophone();
+        } else {
+          await audioEngine.initMicrophone();
+        }
         isMicActive = true;
         document.getElementById('lobbyMicPlaceholder').classList.add('hidden');
         document.getElementById('micStatusBadge').textContent = '✓ Микрофон активен';
         document.getElementById('micStatusBadge').className = 'text-xs px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30';
-        document.getElementById('enableMicBtn').textContent = '✓ Микрофон работает отлично!';
-        document.getElementById('enableMicBtn').className = 'w-full py-3.5 bg-emerald-700 text-emerald-100 font-bold rounded-xl text-sm';
+
+        btn.disabled = false;
+        btn.textContent = '✓ Микрофон включен и готов!';
+        btn.className = 'w-full py-3.5 bg-emerald-700 text-emerald-100 font-bold rounded-xl text-sm cursor-pointer shadow-lg';
 
         // Запуск анимации диктофона на Canvas
         const canvas = document.getElementById('lobbyDictaphoneCanvas');
@@ -463,8 +474,31 @@
           p2p.send('client:player:mic_ready', { ready: true });
         }
       } catch (err) {
-        alert('Не удалось включить микрофон: ' + err.message + '\nУбедитесь, что вы разрешили доступ к микрофону в браузере.');
+        console.error('Ошибка микрофона:', err);
+        btn.disabled = false;
+        btn.className = 'w-full py-3.5 bg-red-600 hover:bg-red-500 text-white font-bold rounded-xl text-sm transition flex items-center justify-center gap-2 cursor-pointer shadow-lg';
+        btn.innerHTML = '<span>❌ Ошибка: повторить попытку</span> 🎤';
+
+        let helpMsg = err.message;
+        if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+          helpMsg = 'Доступ к микрофону заблокирован в настройках браузера!\n\nИнструкция:\n1. Нажмите на значок 🔒 (или 🎙️) слева от адреса сайта в адресной строке.\n2. Переключите пункт «Микрофон» на «Разрешить».\n3. Нажмите кнопку включения микрофона снова.';
+          alert('⚠️ ДОСТУП К МИКРОФОНУ ЗАБЛОКИРОВАН!\n\n' + helpMsg);
+        } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+          if (confirm('⚠️ Физический микрофон не обнаружен на вашем ПК!\n\nВключить виртуальный микрофон для проверки игры?')) {
+            activateMicrophone(true);
+            return;
+          }
+        } else {
+          if (confirm(`⚠️ Не удалось подключить микрофон (${err.name || 'Ошибка'}):\n${helpMsg}\n\nВключить тестовый микрофон для проверки игры?`)) {
+            activateMicrophone(true);
+            return;
+          }
+        }
       }
+    }
+
+    document.getElementById('enableMicBtn').onclick = () => {
+      activateMicrophone(false);
     };
 
     // 6. ПЕРЕКЛЮЧЕНИЕ ЭКРАНОВ
@@ -609,8 +643,11 @@
     document.getElementById('startRoundBtn').onclick = () => {
       // 1. Проверяем включил ли хост микрофон
       if (!isMicActive) {
-        alert('⚠️ ОШИБКА: Вы (Хост) ещё не включили микрофон!\n\nНажмите кнопку «Включить микрофон» на панели диктофона сверху, чтобы игра могла начаться.');
-        document.getElementById('enableMicBtn').scrollIntoView({ behavior: 'smooth' });
+        if (confirm('⚠️ Вы (Хост) ещё не включили микрофон!\n\nВключить микрофон прямо сейчас?')) {
+          activateMicrophone(false);
+        } else {
+          document.getElementById('enableMicBtn').scrollIntoView({ behavior: 'smooth' });
+        }
         return;
       }
 

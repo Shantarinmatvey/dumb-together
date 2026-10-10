@@ -53,24 +53,86 @@ export class BrowserAudioEngine {
   async initMicrophone() {
     await this.unlockAudio();
 
-    this.mediaStream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
-        channelCount: 1,
-        sampleRate: 48000
-      },
-      video: false
-    });
+    // 1. Максимально совместимый запрос к микрофону
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      const legacyGetUserMedia = navigator.getUserMedia || navigator.webkitGetUserMedia || navigator.mozGetUserMedia;
+      if (legacyGetUserMedia) {
+        this.mediaStream = await new Promise((resolve, reject) => {
+          legacyGetUserMedia.call(navigator, { audio: true }, resolve, reject);
+        });
+      } else {
+        throw new Error('Ваш браузер не поддерживает доступ к микрофону (navigator.mediaDevices недоступен). Используйте современный Chrome, Edge или Safari.');
+      }
+    } else {
+      try {
+        // Пробуем стандартные фильтры без жестких ограничений sampleRate/channelCount
+        this.mediaStream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true
+          },
+          video: false
+        });
+      } catch (err1) {
+        console.warn('getUserMedia с расширенными фильтрами не удался, пробуем базовый audio: true', err1);
+        try {
+          this.mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        } catch (err2) {
+          throw err2;
+        }
+      }
+    }
 
     this.selectedMimeType = this.resolveMimeType();
 
     // Создаем AnalyserNode для анимации диктофона
-    const source = this.audioContext.createMediaStreamSource(this.mediaStream);
-    this.analyser = this.audioContext.createAnalyser();
-    this.analyser.fftSize = 64;
-    source.connect(this.analyser);
+    if (this.audioContext && this.mediaStream) {
+      try {
+        const source = this.audioContext.createMediaStreamSource(this.mediaStream);
+        this.analyser = this.audioContext.createAnalyser();
+        this.analyser.fftSize = 64;
+        source.connect(this.analyser);
+      } catch (e) {
+        console.warn('Ошибка привязки AnalyserNode:', e);
+      }
+    }
+
+    return this.mediaStream;
+  }
+
+  /**
+   * Инициализация виртуального (тестового) микрофона для ПК без гарнитуры или тестирования
+   */
+  initMockMicrophone() {
+    this.unlockAudio();
+    if (!this.audioContext) {
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      this.audioContext = new AudioContextClass();
+    }
+
+    const dest = this.audioContext.createMediaStreamDestination();
+    // Генерируем тихий фоновый шум/осциллятор, чтобы диктофон реагировал
+    const osc = this.audioContext.createOscillator();
+    const gain = this.audioContext.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(220, this.audioContext.currentTime);
+    gain.gain.setValueAtTime(0.005, this.audioContext.currentTime);
+    osc.connect(gain);
+    gain.connect(dest);
+    osc.start();
+
+    this.mediaStream = dest.stream;
+    this.selectedMimeType = this.resolveMimeType();
+
+    try {
+      const source = this.audioContext.createMediaStreamSource(this.mediaStream);
+      this.analyser = this.audioContext.createAnalyser();
+      this.analyser.fftSize = 64;
+      source.connect(this.analyser);
+    } catch (e) {
+      console.warn('Mock analyser error:', e);
+    }
 
     return this.mediaStream;
   }
