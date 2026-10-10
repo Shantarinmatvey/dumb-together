@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dumb Together — Экран Хоста</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col p-6 overflow-hidden relative">
+
+  <!-- Header -->
+  <header class="flex justify-between items-center mb-4 pb-3 border-b border-slate-800">
+    <div class="flex items-center gap-3">
+      <span class="text-3xl">🎭</span>
+      <div>
+        <h1 class="text-2xl font-black tracking-wider bg-gradient-to-r from-indigo-400 to-pink-500 bg-clip-text text-transparent">
+          DUMB TOGETHER
+        </h1>
+        <p class="text-xs text-slate-400">Главный экран трансляции</p>
+      </div>
+    </div>
+
+    <!-- Room Code Badge -->
+    <div class="flex items-center gap-4">
+      <div class="glass-card px-5 py-2 flex items-center gap-3 border-indigo-500/40">
+        <span class="text-xs font-semibold uppercase text-slate-400 tracking-wider">Код комнаты:</span>
+        <span id="roomCodeDisplay" class="text-3xl font-mono font-black tracking-widest text-indigo-400">----</span>
+      </div>
+      <div id="connStatus" class="w-3.5 h-3.5 rounded-full bg-amber-500 animate-pulse" title="Подключение..."></div>
+    </div>
+  </header>
+
+  <!-- Reaction Floating Container -->
+  <div id="reactionsOverlay" class="absolute inset-0 pointer-events-none z-40 overflow-hidden"></div>
+
+  <!-- STAGE 1: LOBBY -->
+  <main id="stageLobby" class="flex-1 grid grid-cols-12 gap-6 items-center">
+    <!-- Left Column: QR and Instructions -->
+    <div class="col-span-5 glass-card p-6 flex flex-col items-center justify-center text-center space-y-4">
+      <h2 class="text-xl font-bold text-slate-200">Подключайтесь со смартфонов!</h2>
+      <p class="text-sm text-slate-400">Отсканируйте QR-код или откройте сайт и введите код комнаты</p>
+      
+      <div class="p-4 bg-white rounded-2xl shadow-2xl">
+        <img id="qrCodeImg" class="w-56 h-56" alt="QR Code для подключения">
+      </div>
+
+      <div class="text-center font-mono text-sm text-indigo-300 bg-slate-900/80 px-4 py-2 rounded-lg border border-slate-800">
+        <span id="joinUrlText">http://...</span>
+      </div>
+    </div>
+
+    <!-- Right Column: Players and Start Controls -->
+    <div class="col-span-7 glass-card p-6 flex flex-col h-full justify-between">
+      <div>
+        <div class="flex justify-between items-center mb-4">
+          <h3 class="text-lg font-bold text-slate-200 flex items-center gap-2">
+            <span>👥</span> Участники в комнате (<span id="playerCount">0</span>)
+          </h3>
+          <span class="text-xs text-slate-400">Минимум: 1 игрок</span>
+        </div>
+
+        <!-- Players Grid -->
+        <div id="playersGrid" class="grid grid-cols-2 md:grid-cols-3 gap-3 max-h-80 overflow-y-auto p-1">
+          <!-- Dynamically populated -->
+        </div>
+      </div>
+
+      <!-- Clip Selection & Start Round -->
+      <div class="pt-6 border-t border-slate-800 space-y-4">
+        <div>
+          <label class="block text-xs font-semibold text-slate-400 mb-2 uppercase tracking-wider">Выбор сценария:</label>
+          <div class="grid grid-cols-3 gap-2" id="clipSelector">
+            <!-- Dynamically populated -->
+          </div>
+        </div>
+
+        <button id="startRoundBtn"
+          class="w-full py-5 bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 hover:from-indigo-500 hover:to-pink-500 text-white text-xl font-black rounded-xl shadow-xl transition transform active:scale-98 flex items-center justify-center gap-3">
+          <span>🎬</span> НАЧАТЬ РАУНД!
+        </button>
+      </div>
+    </div>
+  </main>
+
+  <!-- STAGE 2: PREVIEW & ROLES -->
+  <main id="stagePreview" class="flex-1 hidden flex-col items-center justify-center space-y-6">
+    <div class="text-center space-y-1">
+      <span class="px-3 py-1 bg-indigo-500/20 text-indigo-400 rounded-full text-xs font-semibold tracking-wider uppercase">Предпросмотр клипа</span>
+      <h2 id="previewTitle" class="text-3xl font-black text-white">...</h2>
+      <p id="previewDesc" class="text-sm text-slate-400 max-w-lg mx-auto">...</p>
+    </div>
+
+    <!-- Canvas Preview Player -->
+    <div class="relative rounded-2xl overflow-hidden shadow-2xl border border-slate-700 bg-slate-900 w-full max-w-4xl aspect-video flex items-center justify-center">
+      <canvas id="previewCanvas" width="960" height="540" class="w-full h-full object-contain"></canvas>
+    </div>
+
+    <!-- Assigned Roles Summary -->
+    <div id="previewRolesList" class="flex flex-wrap justify-center gap-4 max-w-4xl">
+      <!-- Roles badges -->
+    </div>
+
+    <button id="goToRecordingBtn"
+      class="px-8 py-3.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl shadow-lg transition">
+      Перейти к синхронной записи 🎙️
+    </button>
+  </main>
+
+  <!-- STAGE 3: COUNTDOWN & RECORDING -->
+  <main id="stageRecording" class="flex-1 hidden flex-col items-center justify-center space-y-6">
+    <!-- Big Countdown Overlay -->
+    <div id="countdownBox" class="text-center space-y-2">
+      <div id="countdownNumber" class="text-8xl font-black text-amber-400 animate-pulse-slow">3</div>
+      <p class="text-lg text-slate-400 font-medium">Приготовьтесь к записи...</p>
+    </div>
+
+    <!-- Live Recording View -->
+    <div id="recordingBox" class="hidden flex-col items-center w-full max-w-4xl space-y-4">
+      <div class="flex items-center gap-3 bg-red-950/60 border border-red-500/50 px-6 py-2.5 rounded-full text-red-400 font-bold">
+        <span class="recording-indicator"></span>
+        <span class="tracking-widest uppercase text-sm">СИНХРОННАЯ ЗАПИСЬ В ЭФИРЕ</span>
+      </div>
+
+      <div class="relative rounded-2xl overflow-hidden shadow-2xl border border-red-500/40 bg-slate-900 w-full aspect-video">
+        <canvas id="recordingCanvas" width="960" height="540" class="w-full h-full object-contain"></canvas>
+      </div>
+    </div>
+  </main>
+
+  <!-- STAGE 4: MIXING & UPLOAD STATUS -->
+  <main id="stageMixing" class="flex-1 hidden flex-col items-center justify-center space-y-6 text-center">
+    <div class="text-5xl animate-bounce">🎧</div>
+    <h2 class="text-3xl font-black text-white">Сведение аудиодорожек...</h2>
+    <p class="text-slate-400 text-sm max-w-md">
+      Получаем записанные звуковые фрагменты от каждого смартфона и загружаем в микшер.
+    </p>
+
+    <div class="w-full max-w-md bg-slate-800 rounded-full h-4 overflow-hidden border border-slate-700">
+      <div id="uploadProgressBar" class="bg-gradient-to-r from-indigo-500 to-pink-500 h-full transition-all duration-300 w-1/4"></div>
+    </div>
+    <div id="uploadStatusText" class="text-xs text-indigo-400 font-mono">Ожидание дорожек...</div>
+  </main>
+
+  <!-- STAGE 5: PLAYBACK («КИНОЗАЛ») -->
+  <main id="stagePlayback" class="flex-1 hidden flex-col items-center justify-between space-y-4">
+    <div class="text-center">
+      <span class="px-4 py-1 bg-pink-500/20 text-pink-400 rounded-full text-xs font-bold uppercase tracking-widest border border-pink-500/30">
+        🍿 КИНОЗАЛ: СМОТРИМ ШЕДЕВР!
+      </span>
+    </div>
+
+    <!-- Video Canvas -->
+    <div class="relative rounded-2xl overflow-hidden shadow-2xl border border-indigo-500/40 bg-slate-900 w-full max-w-4xl aspect-video">
+      <canvas id="playbackCanvas" width="960" height="540" class="w-full h-full object-contain"></canvas>
+    </div>
+
+    <!-- Multitrack Waveform Visualizer -->
+    <div class="w-full max-w-4xl glass-card p-3 border-indigo-500/30">
+      <canvas id="waveformsCanvas" width="960" height="90" class="w-full h-24 rounded-lg"></canvas>
+    </div>
+
+    <button id="goToResultsBtn"
+      class="px-8 py-3 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl transition">
+      Перейти к голосованию и результатам 🏆
+    </button>
+  </main>
+
+  <!-- STAGE 6: RESULTS & LEADERBOARD -->
+  <main id="stageResults" class="flex-1 hidden flex-col items-center justify-center space-y-8">
+    <div class="text-center space-y-2">
+      <div class="text-5xl">🏆</div>
+      <h2 class="text-4xl font-black bg-gradient-to-r from-amber-400 to-pink-400 bg-clip-text text-transparent">
+        ТАБЛИЦА ЛИДЕРОВ РАУНДА
+      </h2>
+      <p class="text-sm text-slate-400">Очки за тайминг и голоса зрителей</p>
+    </div>
+
+    <!-- Leaderboard cards -->
+    <div id="leaderboardList" class="w-full max-w-xl space-y-3">
+      <!-- Dynamically populated -->
+    </div>
+
+    <button id="nextRoundBtn"
+      class="px-10 py-4 bg-gradient-to-r from-indigo-600 to-pink-600 hover:from-indigo-500 hover:to-pink-500 text-white text-lg font-black rounded-xl shadow-xl transition transform active:scale-95">
+      ИГРАТЬ СЛЕДУЮЩИЙ РАУНД 🔄
+    </button>
+  </main>
+
+  <!-- Logic Scripts -->
+  <script type="module">
+    import { ClockSynchronizer } from '/static/js/time-sync.js';
+    import { CLIPS_METADATA, drawClipAnimation } from '/static/js/clips-data.js';
+    import { HostMultitrackMixer } from '/static/js/host-mixer.js';
+
+    // Parse Room Code
+    const params = new URLSearchParams(window.location.search);
+    const roomCode = (params.get('room') || '----').toUpperCase();
+    document.getElementById('roomCodeDisplay').textContent = roomCode;
+
+    // QR Code URL
+    const joinUrl = `${window.location.origin}/static/controller.html?room=${roomCode}`;
+    document.getElementById('joinUrlText').textContent = joinUrl;
+    document.getElementById('qrCodeImg').src = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(joinUrl)}`;
+
+    let ws = null;
+    let clockSync = null;
+    let mixer = new HostMultitrackMixer();
+    let currentClip = CLIPS_METADATA[0];
+    let players = [];
+    let stage = 'LOBBY';
+
+    // Render clip selector buttons
+    const clipSelector = document.getElementById('clipSelector');
+    CLIPS_METADATA.forEach((clip, index) => {
+      const btn = document.createElement('button');
+      btn.className = `p-3 text-left rounded-xl border transition ${index === 0 ? 'border-indigo-500 bg-indigo-500/20 text-white' : 'border-slate-800 bg-slate-900/40 text-slate-400 hover:border-slate-700'}`;
+      btn.innerHTML = `<div class="text-xs font-bold uppercase truncate">${clip.title}</div><div class="text-[10px] text-slate-500">${(clip.durationMs / 1000).toFixed(1)} сек</div>`;
+      btn.onclick = () => {
+        currentClip = clip;
+        Array.from(clipSelector.children).forEach(b => {
+          b.className = 'p-3 text-left rounded-xl border border-slate-800 bg-slate-900/40 text-slate-400 hover:border-slate-700';
+        });
+        btn.className = 'p-3 text-left rounded-xl border border-indigo-500 bg-indigo-500/20 text-white';
+      };
+      clipSelector.appendChild(btn);
+    });
+
+    // WebSocket Setup
+    function initWebSocket() {
+      const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      ws = new WebSocket(`${proto}//${window.location.host}/ws/${roomCode}`);
+      clockSync = new ClockSynchronizer(ws);
+
+      ws.onopen = async () => {
+        document.getElementById('connStatus').className = 'w-3.5 h-3.5 rounded-full bg-emerald-500';
+        await clockSync.calibrate(6);
+
+        // Register as Host
+        ws.send(JSON.stringify({
+          event: 'client:room:join',
+          payload: {
+            roomCode,
+            nickname: 'HostScreen',
+            avatarId: '📺',
+            isHost: true
+          }
+        }));
+      };
+
+      ws.onclose = () => {
+        document.getElementById('connStatus').className = 'w-3.5 h-3.5 rounded-full bg-red-500 animate-pulse';
+        setTimeout(initWebSocket, 2000);
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          handleServerEvent(msg.event, msg.payload);
+        } catch (e) {
+          console.error('WS parse error:', e);
+        }
+      };
+    }
+
+    function switchStage(newStage) {
+      stage = newStage;
+      ['Lobby', 'Preview', 'Recording', 'Mixing', 'Playback', 'Results'].forEach(s => {
+        const el = document.getElementById(`stage${s}`);
+        if (el) el.classList.add('hidden');
+      });
+      const target = document.getElementById(`stage${newStage.charAt(0).toUpperCase() + newStage.slice(1).toLowerCase()}`);
+      if (target) {
+        target.classList.remove('hidden');
+        if (newStage === 'LOBBY') target.classList.add('grid');
+        else target.classList.add('flex');
+      }
+    }
+
+    function handleServerEvent(event, payload) {
+      if (event === 'server:room:state_update') {
+        players = payload.players || [];
+        updatePlayersUI();
+      } else if (event === 'server:game:role_assign') {
+        // Preview stage
+      } else if (event === 'server:game:start_recording') {
+        startRecordingCountdown(payload.startAtServerTimestamp, payload.durationMs, payload.countdownMs);
+      } else if (event === 'server:game:all_audio_ready') {
+        autoStartPlayback();
+      } else if (event === 'server:game:playback_start') {
+        runPlayback(payload);
+      } else if (event === 'server:game:reaction') {
+        triggerFloatingReaction(payload.emoji);
+      } else if (event === 'server:game:results') {
+        renderLeaderboard(payload.leaderboard);
+      }
+    }
+
+    function updatePlayersUI() {
+      const active = players.filter(p => !p.isHost);
+      document.getElementById('playerCount').textContent = active.length;
+      const grid = document.getElementById('playersGrid');
+      grid.innerHTML = '';
+
+      if (active.length === 0) {
+        grid.innerHTML = `<div class="col-span-full py-8 text-center text-slate-500 text-sm">Ожидание подключения игроков...</div>`;
+        return;
+      }
+
+      active.forEach(p => {
+        const card = document.createElement('div');
+        card.className = 'glass-card p-3 flex items-center gap-3 border-slate-800';
+        card.innerHTML = `
+          <div class="text-3xl">${p.avatarId || '🎙️'}</div>
+          <div class="truncate">
+            <div class="text-sm font-bold text-slate-200 truncate">${p.nickname}</div>
+            <div class="text-[10px] ${p.micReady ? 'text-emerald-400' : 'text-amber-400'}">
+              ${p.micReady ? '✓ Микрофон готов' : '● Проверка микрофона...'}
+            </div>
+          </div>
+        `;
+        grid.appendChild(card);
+      });
+    }
+
+    // Floating Emoji Reactions
+    function triggerFloatingReaction(emoji) {
+      const container = document.getElementById('reactionsOverlay');
+      const el = document.createElement('div');
+      el.className = 'flying-emoji';
+      el.textContent = emoji;
+      el.style.left = `${15 + Math.random() * 70}%`;
+      el.style.bottom = '50px';
+      container.appendChild(el);
+      setTimeout(() => el.remove(), 2000);
+    }
+
+    // BUTTON: START ROUND
+    document.getElementById('startRoundBtn').onclick = () => {
+      ws.send(JSON.stringify({
+        event: 'client:game:request_start_preview',
+        payload: { clipId: currentClip.clipId }
+      }));
+      showPreviewStage();
+    };
+
+    function showPreviewStage() {
+      switchStage('PREVIEW');
+      document.getElementById('previewTitle').textContent = currentClip.title;
+      document.getElementById('previewDesc').textContent = currentClip.description;
+
+      const rolesList = document.getElementById('previewRolesList');
+      rolesList.innerHTML = '';
+      currentClip.roles.forEach(r => {
+        const badge = document.createElement('div');
+        badge.className = 'px-4 py-2 rounded-xl border text-sm font-bold flex items-center gap-2';
+        badge.style.borderColor = r.color;
+        badge.style.backgroundColor = `${r.color}20`;
+        badge.style.color = r.color;
+        badge.innerHTML = `<span>${r.avatarPlaceholder}</span> <span>${r.name}</span>`;
+        rolesList.appendChild(badge);
+      });
+
+      // Animate preview canvas
+      const canvas = document.getElementById('previewCanvas');
+      const ctx = canvas.getContext('2d');
+      const startTime = performance.now();
+
+      function anim() {
+        if (stage !== 'PREVIEW') return;
+        const elapsed = (performance.now() - startTime) % currentClip.durationMs;
+        drawClipAnimation(ctx, canvas.width, canvas.height, currentClip.clipId, elapsed, currentClip.durationMs);
+        requestAnimationFrame(anim);
+      }
+      anim();
+    }
+
+    // BUTTON: GO TO RECORDING
+    document.getElementById('goToRecordingBtn').onclick = () => {
+      ws.send(JSON.stringify({
+        event: 'client:game:request_start_recording',
+        payload: { countdownMs: 3000 }
+      }));
+    };
+
+    function startRecordingCountdown(startAtServerMs, durationMs, countdownMs) {
+      switchStage('RECORDING');
+      document.getElementById('countdownBox').classList.remove('hidden');
+      document.getElementById('recordingBox').classList.add('hidden');
+
+      const numEl = document.getElementById('countdownNumber');
+      const interval = setInterval(() => {
+        const clientNow = performance.now() + performance.timeOrigin;
+        const targetClientStart = clockSync.toClientTime(startAtServerMs);
+        const rem = Math.ceil((targetClientStart - clientNow) / 1000);
+
+        if (rem > 0) {
+          numEl.textContent = rem;
+        } else {
+          clearInterval(interval);
+          numEl.textContent = 'ГОЛОС!';
+          setTimeout(() => {
+            document.getElementById('countdownBox').classList.add('hidden');
+            document.getElementById('recordingBox').classList.remove('hidden');
+            startRecordingAnimation(targetClientStart, durationMs);
+          }, 300);
+        }
+      }, 100);
+    }
+
+    function startRecordingAnimation(startClientTime, durationMs) {
+      const canvas = document.getElementById('recordingCanvas');
+      const ctx = canvas.getContext('2d');
+
+      function anim() {
+        if (stage !== 'RECORDING') return;
+        const now = performance.now() + performance.timeOrigin;
+        const elapsed = Math.max(0, now - startClientTime);
+
+        drawClipAnimation(ctx, canvas.width, canvas.height, currentClip.clipId, elapsed, durationMs);
+
+        if (elapsed < durationMs) {
+          requestAnimationFrame(anim);
+        } else {
+          // Recording completed, wait for audio uploads
+          switchStage('MIXING');
+        }
+      }
+      requestAnimationFrame(anim);
+    }
+
+    async function autoStartPlayback() {
+      document.getElementById('uploadProgressBar').style.width = '100%';
+      document.getElementById('uploadStatusText').textContent = 'Все дорожки получены! Запуск Кинозала...';
+      setTimeout(() => {
+        ws.send(JSON.stringify({
+          event: 'client:game:request_playback',
+          payload: {}
+        }));
+      }, 1200);
+    }
+
+    async function runPlayback(payload) {
+      switchStage('PLAYBACK');
+      const tracks = payload.tracks || [];
+
+      // Preload all audio tracks into HostMultitrackMixer
+      for (const t of tracks) {
+        if (t.audioUrl) {
+          await mixer.loadTrack(t.playerId, t.audioUrl);
+        }
+      }
+
+      // Schedule playback
+      mixer.playAllScheduled();
+
+      // Render waveforms on bottom canvas
+      const waveCanvas = document.getElementById('waveformsCanvas');
+      mixer.renderWaveforms(waveCanvas, tracks);
+
+      // Play video canvas animation
+      const canvas = document.getElementById('playbackCanvas');
+      const ctx = canvas.getContext('2d');
+      const startClientTime = performance.now();
+      const durationMs = currentClip.durationMs;
+
+      function anim() {
+        if (stage !== 'PLAYBACK') return;
+        const elapsed = performance.now() - startClientTime;
+        drawClipAnimation(ctx, canvas.width, canvas.height, currentClip.clipId, elapsed, durationMs);
+
+        if (elapsed < durationMs) {
+          requestAnimationFrame(anim);
+        } else {
+          console.log('Playback complete');
+        }
+      }
+      requestAnimationFrame(anim);
+    }
+
+    document.getElementById('goToResultsBtn').onclick = () => {
+      ws.send(JSON.stringify({
+        event: 'client:game:show_results',
+        payload: {}
+      }));
+    };
+
+    function renderLeaderboard(leaderboard) {
+      switchStage('RESULTS');
+      mixer.stopAll();
+      mixer.stopWaveforms();
+
+      const list = document.getElementById('leaderboardList');
+      list.innerHTML = '';
+
+      (leaderboard || []).forEach((entry, i) => {
+        const item = document.createElement('div');
+        const medals = ['🥇', '🥈', '🥉'];
+        const medal = medals[i] || `#${i + 1}`;
+        item.className = 'glass-card p-4 flex items-center justify-between border-slate-800';
+        item.innerHTML = `
+          <div class="flex items-center gap-4">
+            <span class="text-2xl font-black">${medal}</span>
+            <span class="text-3xl">${entry.avatarId || '🎙️'}</span>
+            <div>
+              <div class="font-bold text-slate-100 text-lg">${entry.nickname}</div>
+              <div class="text-xs text-indigo-400">❤️ ${entry.votes} голосов зрителей</div>
+            </div>
+          </div>
+          <div class="text-2xl font-mono font-black text-amber-400">${entry.score} pts</div>
+        `;
+        list.appendChild(item);
+      });
+    }
+
+    document.getElementById('nextRoundBtn').onclick = () => {
+      ws.send(JSON.stringify({
+        event: 'client:game:return_to_lobby',
+        payload: {}
+      }));
+      switchStage('LOBBY');
+    };
+
+    // Initialize
+    initWebSocket();
+  </script>
+</body>
+</html>
