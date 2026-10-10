@@ -15,8 +15,8 @@
   <header class="flex justify-between items-center pb-3 mb-3 border-b border-slate-800">
     <div class="flex items-center gap-2 md:gap-3">
       <!-- Back Button to Exit Room -->
-      <button id="exitRoomBtn" class="px-2.5 py-1.5 bg-slate-900 hover:bg-slate-800 border border-slate-700 rounded-xl text-xs font-bold text-slate-300 transition flex items-center gap-1">
-        <span>⬅</span> <span class="hidden sm:inline">Выйти</span>
+      <button id="exitRoomBtn" class="px-2.5 py-1.5 bg-slate-900 hover:bg-slate-800 active:bg-slate-700 border border-slate-700 rounded-xl text-xs font-bold text-slate-300 transition flex items-center gap-1 cursor-pointer" title="Выйти в главное меню">
+        <span>⬅</span> <span>Выйти</span>
       </button>
 
       <span class="text-2xl md:text-3xl">🎭</span>
@@ -70,9 +70,14 @@
       </div>
 
       <button id="enableMicBtn"
-        class="w-full py-3.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl transition flex items-center justify-center gap-2 text-sm shadow-lg active:scale-98">
+        class="w-full py-3.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl transition flex items-center justify-center gap-2 text-sm shadow-lg active:scale-98 cursor-pointer">
         <span>ВКЛЮЧИТЬ МИКРОФОН</span> 🎤
       </button>
+      <div class="text-center pt-1">
+        <button id="useVirtualMicBtn" type="button" class="text-[11px] text-slate-400 hover:text-amber-300 underline cursor-pointer transition">
+          Нет физического микрофона? Включить тестовый диктофон
+        </button>
+      </div>
     </div>
 
     <!-- Players in Room List -->
@@ -317,6 +322,17 @@
       sessionStorage.setItem(`isHost_${roomCode}`, 'true');
     }
 
+    // Состояние игры и движков (объявлено в самом верху, чтобы исключить любые ошибки инициализации)
+    let stage = 'LOBBY';
+    let audioEngine = new BrowserAudioEngine();
+    let isMicActive = false;
+    let p2p = null;
+    let myFragment = null;
+    let allFragments = [];
+    let previewAudio = null;
+    let hasVoted = false;
+    let currentClip = CLIPS_METADATA[0];
+
     // 2. СИНХРОННАЯ ИНИЦИАЛИЗАЦИЯ ИНТЕРФЕЙСА (НЕ ЗАВИСИТ ОТ СЕТИ)
     document.getElementById('roomCodeText').textContent = roomCode;
     document.getElementById('myNickDisplay').textContent = nickname;
@@ -339,24 +355,34 @@
       document.getElementById('guestWaitNextRoundNotice').classList.remove('hidden');
     }
 
-    // Кнопка выхода в меню
+    // Кнопка выхода в меню (мгновенный и надежный переход)
     document.getElementById('exitRoomBtn').onclick = () => {
-      if (confirm('Вы уверены, что хотите выйти из комнаты?')) {
-        sessionStorage.removeItem(`isHost_${roomCode}`);
+      sessionStorage.removeItem(`isHost_${roomCode}`);
+      try {
         if (p2p) p2p.dispose();
-        if (audioEngine) audioEngine.dispose();
-        window.location.href = './index.html';
+      } catch (e) {
+        console.warn('p2p dispose error:', e);
       }
+      try {
+        if (audioEngine) audioEngine.dispose();
+      } catch (e) {
+        console.warn('audioEngine dispose error:', e);
+      }
+      window.location.href = './index.html';
     };
 
     // Кнопка копирования ссылки
     document.getElementById('copyLinkBtn').onclick = () => {
       const url = `${window.location.origin}${window.location.pathname.replace('game.html', 'index.html')}?room=${roomCode}`;
-      navigator.clipboard.writeText(url).then(() => {
-        alert('Ссылка скопирована! Отправьте её друзьям: ' + url);
-      }).catch(() => {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(url).then(() => {
+          alert('Ссылка скопирована! Отправьте её друзьям: ' + url);
+        }).catch(() => {
+          prompt('Скопируйте ссылку вручную:', url);
+        });
+      } else {
         prompt('Скопируйте ссылку вручную:', url);
-      });
+      }
     };
 
     // 3. ЛОКАЛЬНЫЙ СПИСОК ИГРОКОВ (СЕБЯ ПОКАЗЫВАЕМ СРАЗУ!)
@@ -418,7 +444,6 @@
     renderPlayers();
 
     // 4. ВЫБОР СЦЕНКИ ДЛЯ ХОСТА
-    let currentClip = CLIPS_METADATA[0];
     const clipChoicesContainer = document.getElementById('clipChoices');
     CLIPS_METADATA.forEach((clip, i) => {
       const btn = document.createElement('button');
@@ -435,9 +460,6 @@
     });
 
     // 5. МИКРОФОН И ДИКТОФОН
-    let audioEngine = new BrowserAudioEngine();
-    let isMicActive = false;
-
     async function activateMicrophone(useMock = false) {
       const btn = document.getElementById('enableMicBtn');
       btn.disabled = true;
@@ -452,11 +474,11 @@
         }
         isMicActive = true;
         document.getElementById('lobbyMicPlaceholder').classList.add('hidden');
-        document.getElementById('micStatusBadge').textContent = '✓ Микрофон активен';
+        document.getElementById('micStatusBadge').textContent = useMock ? '✓ Тестовый микрофон' : '✓ Микрофон активен';
         document.getElementById('micStatusBadge').className = 'text-xs px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30';
 
         btn.disabled = false;
-        btn.textContent = '✓ Микрофон включен и готов!';
+        btn.textContent = useMock ? '✓ Тестовый диктофон готов!' : '✓ Микрофон включен и готов!';
         btn.className = 'w-full py-3.5 bg-emerald-700 text-emerald-100 font-bold rounded-xl text-sm cursor-pointer shadow-lg';
 
         // Запуск анимации диктофона на Canvas
@@ -479,20 +501,14 @@
         btn.className = 'w-full py-3.5 bg-red-600 hover:bg-red-500 text-white font-bold rounded-xl text-sm transition flex items-center justify-center gap-2 cursor-pointer shadow-lg';
         btn.innerHTML = '<span>❌ Ошибка: повторить попытку</span> 🎤';
 
-        let helpMsg = err.message;
+        let helpMsg = err.message || '';
         if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-          helpMsg = 'Доступ к микрофону заблокирован в настройках браузера!\n\nИнструкция:\n1. Нажмите на значок 🔒 (или 🎙️) слева от адреса сайта в адресной строке.\n2. Переключите пункт «Микрофон» на «Разрешить».\n3. Нажмите кнопку включения микрофона снова.';
+          helpMsg = 'Доступ к микрофону заблокирован в браузере!\n\nИнструкция:\n1. Нажмите на значок 🔒 (или 🎙️) слева от адреса сайта в строке браузера.\n2. Переключите пункт «Микрофон» на «Разрешить».\n3. Нажмите кнопку включения микрофона снова.\n\nИли нажмите ссылку ниже кнопки, чтобы использовать тестовый диктофон.';
           alert('⚠️ ДОСТУП К МИКРОФОНУ ЗАБЛОКИРОВАН!\n\n' + helpMsg);
-        } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
-          if (confirm('⚠️ Физический микрофон не обнаружен на вашем ПК!\n\nВключить виртуальный микрофон для проверки игры?')) {
-            activateMicrophone(true);
-            return;
-          }
         } else {
-          if (confirm(`⚠️ Не удалось подключить микрофон (${err.name || 'Ошибка'}):\n${helpMsg}\n\nВключить тестовый микрофон для проверки игры?`)) {
-            activateMicrophone(true);
-            return;
-          }
+          console.warn('Микрофон недоступен, автоматически включаем виртуальный тестовый диктофон...');
+          activateMicrophone(true);
+          return;
         }
       }
     }
@@ -501,8 +517,14 @@
       activateMicrophone(false);
     };
 
+    const virtualMicBtn = document.getElementById('useVirtualMicBtn');
+    if (virtualMicBtn) {
+      virtualMicBtn.onclick = () => {
+        activateMicrophone(true);
+      };
+    }
+
     // 6. ПЕРЕКЛЮЧЕНИЕ ЭКРАНОВ
-    let stage = 'LOBBY';
     function switchStage(newStage) {
       stage = newStage;
       ['Lobby', 'Preview', 'Recording', 'Playback', 'Voting', 'Results'].forEach(s => {
@@ -514,12 +536,6 @@
     }
 
     // 7. СЕТЕВОЙ ДВИЖОК WEBRTC P2P
-    let p2p = null;
-    let myFragment = null;
-    let allFragments = [];
-    let previewAudio = null;
-    let hasVoted = false;
-
     function initNetwork() {
       if (isHost) {
         p2p = new HostP2PManager(roomCode, nickname, avatar, {
