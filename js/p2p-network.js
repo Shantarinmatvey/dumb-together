@@ -1,8 +1,10 @@
 /**
  * p2p-network.js
- * Реализует серверлесс P2P-сеть для игры «Dumb Together» поверх WebRTC (PeerJS).
- * Позволяет создавать комнаты и играть через интернет без выделенного сервера.
+ * P2P WebRTC движок (PeerJS), в котором ХОСТ ЯВЛЯЕТСЯ ПОЛНОЦЕННЫМ УЧАСТНИКОМ ИГРЫ,
+ * с поддержкой разделения сценки на фрагменты, 30-секундного голосования и досрочного завершения.
  */
+
+import { getActiveFragments } from './clips-data.js';
 
 const PEER_CONFIG = {
   debug: 1,
@@ -16,32 +18,57 @@ const PEER_CONFIG = {
 };
 
 /**
- * Менеджер сетевой сессии на стороне ХОСТА (Главного экрана)
+ * Хост (Создатель комнаты) — полноценный участник
  */
 export class HostP2PManager {
-  constructor(roomCode, options = {}) {
+  constructor(roomCode, hostNickname = 'Хост', hostAvatar = '👑', options = {}) {
     this.roomCode = roomCode.toUpperCase();
+    this.hostNickname = hostNickname;
+    this.hostAvatar = hostAvatar;
     this.peerId = `dt-${this.roomCode}`;
     this.peer = null;
-    this.connections = new Map(); // connId -> DataConnection
-    this.players = new Map(); // connId -> Player Object
-    this.listeners = new Map();
+    this.connections = new Map(); // peerId -> DataConnection
+    this.players = new Map(); // peerId -> Player Object
     this.stage = 'LOBBY';
     this.currentClip = null;
+    this.activeFragments = [];
+    this.votingTimer = null;
+    this.votingTimeRemaining = 30;
+
     this.onStatusChange = options.onStatusChange || (() => {});
     this.onReaction = options.onReaction || (() => {});
     this.onCodeTaken = options.onCodeTaken || (() => {});
     this.onAllAudioReady = options.onAllAudioReady || (() => {});
+    this.onHostAssigned = options.onHostAssigned || (() => {});
+    this.onStateUpdate = options.onStateUpdate || (() => {});
+    this.onVotingTick = options.onVotingTick || (() => {});
+
+    // Регистрируем ХОСТА как первого полноценного игрока в комнате!
+    this.players.set('host', {
+      playerId: 'host',
+      nickname: this.hostNickname,
+      avatarId: this.hostAvatar,
+      isHost: true,
+      micReady: true,
+      assignedFragment: null,
+      hasAudio: false,
+      audioArrayBuffer: null,
+      audioBlobUrl: null,
+      mimeType: 'audio/webm',
+      score: 0,
+      votes: 0
+    });
   }
 
   init() {
-    return new Promise((resolve, reject) => {
+    return new Promise((resolve) => {
       // @ts-ignore
       this.peer = new window.Peer(this.peerId, PEER_CONFIG);
 
       this.peer.on('open', (id) => {
-        console.log(`[HostP2P] Хост успешно зарегистрирован в сети с PeerID: ${id}`);
+        console.log(`[HostP2P] Комната открыта, Host PeerID: ${id}`);
         this.onStatusChange('connected');
+        this.broadcastRoomState();
         resolve(id);
       });
 
@@ -61,7 +88,7 @@ export class HostP2PManager {
 
   handleIncomingConnection(conn) {
     conn.on('open', () => {
-      console.log(`[HostP2P] Новое входящее подключение: ${conn.peer}`);
+      console.log(`[HostP2P] Подключился гость: ${conn.peer}`);
       this.connections.set(conn.peer, conn);
     });
 
@@ -70,7 +97,7 @@ export class HostP2PManager {
     });
 
     conn.on('close', () => {
-      console.log(`[HostP2P] Отключение игрока: ${conn.peer}`);
+      console.log(`[HostP2P] Отключился игрок: ${conn.peer}`);
       this.connections.delete(conn.peer);
       this.players.delete(conn.peer);
       this.broadcastRoomState();
@@ -81,33 +108,29 @@ export class HostP2PManager {
     if (!msg || !msg.event) return;
     const { event, payload } = msg;
 
-    // 1. NTP-калибровка времени относительно Хоста
+    // NTP-калибровка времени
     if (event === 'client:time:sync_request') {
       const now = performance.now() + performance.timeOrigin;
       conn.send({
         event: 'server:time:sync_response',
-        payload: {
-          t0: payload.t0,
-          t1: now,
-          t2: now
-        }
+        payload: { t0: payload.t0, t1: now, t2: now }
       });
       return;
     }
 
-    // 2. Вход игрока в комнату
+    // Вход нового игрока
     if (event === 'client:room:join') {
       const player = {
         playerId: conn.peer,
-        nickname: payload.nickname || 'Геймер',
+        nickname: payload.nickname || 'Игрок',
         avatarId: payload.avatarId || '🦊',
         isHost: false,
         micReady: false,
-        assignedRoleId: null,
+        assignedFragment: null,
         hasAudio: false,
         audioArrayBuffer: null,
+        audioBlobUrl: null,
         mimeType: 'audio/webm',
-        leadInOffsetMs: 0,
         score: 0,
         votes: 0
       };
@@ -115,17 +138,14 @@ export class HostP2PManager {
 
       conn.send({
         event: 'server:room:joined',
-        payload: {
-          playerId: player.playerId,
-          currentStage: this.stage
-        }
+        payload: { playerId: player.playerId, currentStage: this.stage }
       });
 
       this.broadcastRoomState();
       return;
     }
 
-    // 3. Готовность микрофона
+    // Готовность микрофона
     if (event === 'client:player:mic_ready') {
       const player = this.players.get(conn.peer);
       if (player) {
@@ -135,42 +155,69 @@ export class HostP2PManager {
       return;
     }
 
-    // 4. Получение аудиодорожки напрямую по WebRTC DataChannel
+    // Получение аудиодорожки от гостя
     if (event === 'client:game:audio_data') {
       const player = this.players.get(conn.peer);
       if (player) {
         player.hasAudio = true;
         player.audioArrayBuffer = payload.audioArrayBuffer;
         player.mimeType = payload.mimeType;
-        player.leadInOffsetMs = payload.leadInOffsetMs || 0;
-        player.durationMs = payload.durationMs || 0;
-        console.log(`[HostP2P] Получена аудиодорожка от ${player.nickname} (${player.audioArrayBuffer.byteLength} байт)`);
-        this.broadcastRoomState();
 
-        // Проверяем, все ли игроки с ролями прислали аудио
-        const activeWithRoles = Array.from(this.players.values()).filter(p => p.assignedRoleId);
-        if (activeWithRoles.length > 0 && activeWithRoles.every(p => p.hasAudio)) {
-          this.onAllAudioReady();
-        }
+        // Создаем blob URL для прослушивания
+        const blob = new Blob([player.audioArrayBuffer], { type: player.mimeType });
+        player.audioBlobUrl = URL.createObjectURL(blob);
+
+        console.log(`[HostP2P] Аудио получено от ${player.nickname} (${player.audioArrayBuffer.byteLength} байт)`);
+        this.broadcastRoomState();
+        this.checkAllAudioReady();
       }
       return;
     }
 
-    // 5. Летающие реакции
+    // Реакции
     if (event === 'client:game:reaction') {
       this.onReaction(payload.emoji);
       this.broadcast('server:game:reaction', { emoji: payload.emoji });
       return;
     }
 
-    // 6. Голосование зрителей
+    // Голосование
     if (event === 'client:game:vote') {
       const target = this.players.get(payload.targetPlayerId);
       if (target) {
         target.votes += 1;
         this.broadcastRoomState();
+        this.checkAllVoted();
       }
       return;
+    }
+  }
+
+  // Хост записывает и сохраняет свою собственную аудиодорожку!
+  submitHostAudio(arrayBuffer, mimeType, blobUrl) {
+    const hostPlayer = this.players.get('host');
+    if (hostPlayer) {
+      hostPlayer.hasAudio = true;
+      hostPlayer.audioArrayBuffer = arrayBuffer;
+      hostPlayer.mimeType = mimeType;
+      hostPlayer.audioBlobUrl = blobUrl;
+      console.log(`[HostP2P] Хост сохранил свою аудиодорожку (${arrayBuffer.byteLength} байт)`);
+      this.broadcastRoomState();
+      this.checkAllAudioReady();
+    }
+  }
+
+  checkAllAudioReady() {
+    const active = Array.from(this.players.values()).filter(p => p.assignedFragment);
+    if (active.length > 0 && active.every(p => p.hasAudio)) {
+      this.onAllAudioReady();
+    }
+  }
+
+  checkAllVoted() {
+    const totalVotes = Array.from(this.players.values()).reduce((sum, p) => sum + p.votes, 0);
+    if (totalVotes >= this.players.size) {
+      this.finishVotingEarly();
     }
   }
 
@@ -178,11 +225,7 @@ export class HostP2PManager {
     const msg = { event, payload };
     this.connections.forEach((conn) => {
       if (conn.open) {
-        try {
-          conn.send(msg);
-        } catch (e) {
-          console.warn('[HostP2P] Ошибка отправки пакета:', e);
-        }
+        try { conn.send(msg); } catch (e) { console.warn(e); }
       }
     });
   }
@@ -194,8 +237,9 @@ export class HostP2PManager {
       avatarId: p.avatarId,
       isHost: p.isHost,
       micReady: p.micReady,
-      assignedRoleId: p.assignedRoleId,
+      assignedFragment: p.assignedFragment,
       hasAudio: p.hasAudio,
+      audioBlobUrl: p.audioBlobUrl,
       score: p.score,
       votes: p.votes
     }));
@@ -203,57 +247,68 @@ export class HostP2PManager {
     const statePayload = {
       roomCode: this.roomCode,
       stage: this.stage,
-      players: playersList
+      players: playersList,
+      votingTimeRemaining: this.votingTimeRemaining
     };
 
     this.broadcast('server:room:state_update', statePayload);
-    if (this.onStateUpdate) {
-      this.onStateUpdate(statePayload);
-    }
+    this.onStateUpdate(statePayload);
   }
 
   startPreview(clip) {
     this.stage = 'PREVIEW';
     this.currentClip = clip;
-    const playersList = Array.from(this.players.values());
+    const allPlayers = Array.from(this.players.values());
 
-    // Распределяем роли
-    const roles = clip.roles;
-    playersList.forEach((player, idx) => {
-      const assigned = roles[idx % roles.length];
-      player.assignedRoleId = assigned.role_id || assigned.roleId;
+    // Генерируем фрагменты под реальное количество игроков в комнате
+    this.activeFragments = getActiveFragments(clip, allPlayers.length);
+
+    // Раздаем фрагменты каждому игроку случайно/по очереди, ВКЛЮЧАЯ ХОСТА!
+    allPlayers.forEach((player, idx) => {
+      const fragment = this.activeFragments[idx % this.activeFragments.length];
+      player.assignedFragment = fragment;
       player.hasAudio = false;
       player.audioArrayBuffer = null;
+      player.audioBlobUrl = null;
       player.votes = 0;
 
-      const conn = this.connections.get(player.playerId);
-      if (conn && conn.open) {
-        conn.send({
-          event: 'server:game:role_assign',
-          payload: {
-            clip,
-            role: assigned
-          }
-        });
+      // Если это гость, шлем по сокету
+      if (!player.isHost) {
+        const conn = this.connections.get(player.playerId);
+        if (conn && conn.open) {
+          conn.send({
+            event: 'server:game:role_assign',
+            payload: {
+              clip,
+              fragment,
+              allFragments: this.activeFragments
+            }
+          });
+        }
+      } else {
+        // Если это сам Хост, вызываем callback для локального UI
+        this.onHostAssigned(clip, fragment, this.activeFragments);
       }
     });
 
     this.broadcastRoomState();
   }
 
-  startRecording(countdownMs = 3000, durationMs = 8000) {
+  startRecording(countdownMs = 3000) {
     this.stage = 'RECORDING';
+    const totalDurationMs = this.activeFragments.length * 4000;
     const nowHost = performance.now() + performance.timeOrigin;
     const startAtHost = nowHost + countdownMs;
 
     this.broadcast('server:game:start_recording', {
       startAtServerTimestamp: startAtHost,
-      durationMs,
-      countdownMs
+      totalDurationMs,
+      countdownMs,
+      fragments: this.activeFragments
     });
 
     this.broadcastRoomState();
-    return { startAtHost, durationMs };
+    return { startAtHost, totalDurationMs, countdownMs, fragments: this.activeFragments };
   }
 
   startPlayback(delayMs = 1200) {
@@ -262,14 +317,14 @@ export class HostP2PManager {
     const startAtHost = nowHost + delayMs;
 
     const tracks = Array.from(this.players.values())
-      .filter(p => p.hasAudio && p.audioArrayBuffer)
+      .filter(p => p.hasAudio)
       .map(p => ({
         playerId: p.playerId,
         nickname: p.nickname,
         avatarId: p.avatarId,
         audioArrayBuffer: p.audioArrayBuffer,
-        leadInOffsetMs: p.leadInOffsetMs,
-        roleId: p.assignedRoleId
+        audioBlobUrl: p.audioBlobUrl,
+        fragment: p.assignedFragment
       }));
 
     this.broadcast('server:game:playback_start', {
@@ -279,7 +334,8 @@ export class HostP2PManager {
         playerId: t.playerId,
         nickname: t.nickname,
         avatarId: t.avatarId,
-        roleId: t.roleId
+        audioBlobUrl: t.audioBlobUrl,
+        fragment: t.fragment
       }))
     });
 
@@ -287,12 +343,51 @@ export class HostP2PManager {
     return { startAtHost, tracks };
   }
 
+  startVoting() {
+    this.stage = 'VOTING';
+    this.votingTimeRemaining = 30;
+
+    const tracks = Array.from(this.players.values())
+      .filter(p => p.hasAudio)
+      .map(p => ({
+        playerId: p.playerId,
+        nickname: p.nickname,
+        avatarId: p.avatarId,
+        audioBlobUrl: p.audioBlobUrl,
+        fragment: p.assignedFragment
+      }));
+
+    this.broadcast('server:game:start_voting', {
+      votingDurationSec: 30,
+      tracks
+    });
+    this.broadcastRoomState();
+
+    if (this.votingTimer) clearInterval(this.votingTimer);
+    this.votingTimer = setInterval(() => {
+      this.votingTimeRemaining--;
+      this.onVotingTick(this.votingTimeRemaining);
+
+      if (this.votingTimeRemaining <= 0) {
+        this.finishVotingEarly();
+      }
+    }, 1000);
+  }
+
+  finishVotingEarly() {
+    if (this.votingTimer) {
+      clearInterval(this.votingTimer);
+      this.votingTimer = null;
+    }
+    this.calculateResults();
+  }
+
   calculateResults() {
     this.stage = 'RESULTS';
     const leaderboard = Array.from(this.players.values())
-      .filter(p => p.assignedRoleId)
+      .filter(p => p.assignedFragment)
       .map(p => {
-        p.score = (p.votes * 250) + 500 + Math.floor(Math.random() * 300);
+        p.score = (p.votes * 250) + 500 + Math.floor(Math.random() * 250);
         return {
           playerId: p.playerId,
           nickname: p.nickname,
@@ -311,26 +406,25 @@ export class HostP2PManager {
   returnToLobby() {
     this.stage = 'LOBBY';
     this.currentClip = null;
+    this.activeFragments = [];
     this.players.forEach(p => {
-      p.assignedRoleId = null;
+      p.assignedFragment = null;
       p.hasAudio = false;
       p.audioArrayBuffer = null;
+      p.audioBlobUrl = null;
       p.votes = 0;
     });
-    this.broadcast('server:room:state_update', {
-      roomCode: this.roomCode,
-      stage: 'LOBBY',
-      players: Array.from(this.players.values())
-    });
+    this.broadcastRoomState();
   }
 
   dispose() {
+    if (this.votingTimer) clearInterval(this.votingTimer);
     if (this.peer) this.peer.destroy();
   }
 }
 
 /**
- * Менеджер сетевой сессии на стороне СМАРТФОНА (Контроллера игрока)
+ * Клиент (Гость на смартфоне или ПК)
  */
 export class ClientP2PManager {
   constructor(roomCode, nickname, avatarId) {
@@ -340,15 +434,12 @@ export class ClientP2PManager {
     this.peer = null;
     this.conn = null;
     this.serverTimeOffset = 0;
-    this.isCalibrated = false;
     this.handlers = new Map();
     this.onStatusChange = () => {};
   }
 
   on(event, handler) {
-    if (!this.handlers.has(event)) {
-      this.handlers.set(event, []);
-    }
+    if (!this.handlers.has(event)) this.handlers.set(event, []);
     this.handlers.get(event).push(handler);
   }
 
@@ -362,8 +453,7 @@ export class ClientP2PManager {
       // @ts-ignore
       this.peer = new window.Peer(null, PEER_CONFIG);
 
-      this.peer.on('open', (id) => {
-        console.log(`[ClientP2P] Клиент инициализирован с PeerID: ${id}`);
+      this.peer.on('open', () => {
         this.connectToHost(resolve, reject);
       });
 
@@ -380,19 +470,13 @@ export class ClientP2PManager {
     this.conn = this.peer.connect(hostPeerId, { reliable: true });
 
     this.conn.on('open', async () => {
-      console.log(`[ClientP2P] Соединение с Хостом ${hostPeerId} установлено!`);
       this.onStatusChange('connected');
-
-      // Калибруем часы с Хостом
       await this.calibrateClock(6);
-
-      // Входим в комнату
       this.send('client:room:join', {
         roomCode: this.roomCode,
         nickname: this.nickname,
         avatarId: this.avatarId
       });
-
       resolve(this.conn);
     });
 
@@ -403,12 +487,10 @@ export class ClientP2PManager {
     });
 
     this.conn.on('close', () => {
-      console.warn('[ClientP2P] Соединение с Хостом разорвано');
       this.onStatusChange('disconnected');
     });
 
     this.conn.on('error', (err) => {
-      console.error('[ClientP2P] Ошибка канала данных:', err);
       reject(err);
     });
   }
@@ -431,21 +513,18 @@ export class ClientP2PManager {
             const rtt = (t3 - t0) - (t2 - t1);
             const offset = ((t1 - t0) + (t2 - t3)) / 2;
             samples.push({ rtt, offset });
-            this.conn.off?.('data', handler);
             res();
           }
         };
         this.conn.on('data', handler);
         this.send('client:time:sync_request', { t0 });
-        setTimeout(res, 150);
+        setTimeout(res, 120);
       });
     }
 
     if (samples.length > 0) {
       samples.sort((a, b) => a.rtt - b.rtt);
       this.serverTimeOffset = samples[Math.floor(samples.length / 2)].offset;
-      this.isCalibrated = true;
-      console.log(`[ClientP2P] Часы синхронизированы с Хостом. Offset: ${this.serverTimeOffset.toFixed(2)} ms`);
     }
   }
 
@@ -453,12 +532,11 @@ export class ClientP2PManager {
     return serverTimestampMs - this.serverTimeOffset;
   }
 
-  async sendAudioTrack(blob, mimeType, leadInOffsetMs, durationMs) {
+  async sendAudioTrack(blob, mimeType, durationMs) {
     const arrayBuffer = await blob.arrayBuffer();
     this.send('client:game:audio_data', {
       audioArrayBuffer: arrayBuffer,
       mimeType,
-      leadInOffsetMs,
       durationMs
     });
   }

@@ -7,7 +7,7 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="stylesheet" href="./css/style.css">
 </head>
-<body class="flex flex-col items-center justify-center p-4">
+<body class="flex flex-col items-center justify-center p-4 min-h-screen">
 
   <div class="max-w-md w-full space-y-6 text-center">
     <!-- Header / Logo -->
@@ -19,29 +19,19 @@
         DUMB TOGETHER
       </h1>
       <p class="text-slate-400 text-sm">
-        Кооперативная озвучка безумных клипов с друзьями онлайн прямо в браузере
+        Командная озвучка коротких роликов по фрагментам с друзьями прямо в браузере!
       </p>
     </div>
 
     <!-- Main Card -->
     <div class="glass-card p-6 space-y-5 text-left neon-glow-indigo">
       
-      <!-- Option A: Join as Player -->
+      <!-- Player Profile Form -->
       <div class="space-y-4">
-        <h2 class="text-lg font-bold text-slate-200 flex items-center gap-2">
-          <span>📱</span> Присоединиться к комнате
-        </h2>
-
-        <div>
-          <label class="block text-xs font-medium text-slate-400 mb-1">Код комнаты (4 буквы)</label>
-          <input id="roomCodeInput" type="text" maxlength="4" placeholder="WOLF"
-            class="w-full px-4 py-3 bg-slate-900/80 border border-slate-700 rounded-xl text-center text-2xl font-mono uppercase tracking-widest text-indigo-300 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500">
-        </div>
-
         <div>
           <label class="block text-xs font-medium text-slate-400 mb-1">Ваш никнейм</label>
           <input id="nicknameInput" type="text" maxlength="15" placeholder="Голосистый Боб"
-            class="w-full px-4 py-3 bg-slate-900/80 border border-slate-700 rounded-xl text-slate-200 focus:outline-none focus:border-indigo-500">
+            class="w-full px-4 py-3 bg-slate-900/80 border border-slate-700 rounded-xl text-slate-200 focus:outline-none focus:border-indigo-500 font-bold">
         </div>
 
         <div>
@@ -50,30 +40,39 @@
             <!-- Avatars populated via JS -->
           </div>
         </div>
+      </div>
 
-        <button id="joinBtn"
-          class="w-full py-4 bg-gradient-to-r from-indigo-600 to-pink-600 hover:from-indigo-500 hover:to-pink-500 text-white font-bold rounded-xl shadow-lg transition transform active:scale-95 flex items-center justify-center gap-2">
-          <span>Войти в игру</span> 🚀
+      <div class="border-t border-slate-800 pt-4 space-y-4">
+        <!-- Option A: Join Existing Room -->
+        <div>
+          <label class="block text-xs font-medium text-slate-400 mb-1">Код комнаты для входа (4 буквы)</label>
+          <div class="flex gap-2">
+            <input id="roomCodeInput" type="text" maxlength="4" placeholder="WOLF"
+              class="flex-1 px-4 py-3 bg-slate-900/80 border border-slate-700 rounded-xl text-center text-xl font-mono uppercase tracking-widest text-indigo-300 focus:outline-none focus:border-indigo-500">
+            <button id="joinBtn"
+              class="px-6 py-3 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-xl shadow-lg transition transform active:scale-95 text-sm">
+              Войти 🚀
+            </button>
+          </div>
+        </div>
+
+        <div class="relative flex items-center py-1">
+          <div class="flex-grow border-t border-slate-800"></div>
+          <span class="flex-shrink mx-3 text-[11px] text-slate-500 uppercase font-semibold">или станьте хостом</span>
+          <div class="flex-grow border-t border-slate-800"></div>
+        </div>
+
+        <!-- Option B: Create Room as 1st Player (Host) -->
+        <button id="createHostBtn"
+          class="w-full py-4 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-extrabold rounded-xl shadow-xl transition transform active:scale-95 flex items-center justify-center gap-2">
+          <span>👑 СОЗДАТЬ НОВУЮ КОМНАТУ</span>
         </button>
       </div>
-
-      <div class="relative flex items-center py-2">
-        <div class="flex-grow border-t border-slate-700"></div>
-        <span class="flex-shrink mx-4 text-xs text-slate-500 uppercase font-semibold">или</span>
-        <div class="flex-grow border-t border-slate-700"></div>
-      </div>
-
-      <!-- Option B: Create Room as Host -->
-      <button id="createHostBtn"
-        class="w-full py-3.5 bg-slate-800/80 hover:bg-slate-700 border border-slate-600 text-slate-200 font-semibold rounded-xl transition flex items-center justify-center gap-2">
-        <span>📺</span> Создать экран (Режим ТВ / ПК)
-      </button>
     </div>
 
     <!-- Quick instructions -->
     <div class="text-xs text-slate-500 space-y-1">
-      <p>💡 <b>Как играть:</b> Создайте комнату на ТВ или ноутбуке, а друзья подключаются со смартфонов по QR-коду.</p>
-      <p>Работает онлайн через WebRTC P2P без установки приложений (iOS Safari, Android Chrome, ПК).</p>
+      <p>💡 <b>Как играть:</b> Создайте комнату, отправьте код друзьям. Каждый участник получит свой случайный фрагмент для озвучки, а в конце — 30 секунд на голосование за лучший голос!</p>
     </div>
   </div>
 
@@ -109,19 +108,26 @@
       return res;
     }
 
+    function getNickname() {
+      return document.getElementById('nicknameInput').value.trim() || 'Голосистый ' + Math.floor(Math.random() * 90 + 10);
+    }
+
+    // Join room button
     document.getElementById('joinBtn').onclick = () => {
       const room = document.getElementById('roomCodeInput').value.trim().toUpperCase();
-      const nick = document.getElementById('nicknameInput').value.trim() || 'Голосистый';
+      const nick = getNickname();
       if (!room || room.length < 3) {
-        alert('Пожалуйста, введите код комнаты');
+        alert('Пожалуйста, укажите код комнаты');
         return;
       }
-      window.location.href = `./controller.html?room=${encodeURIComponent(room)}&nick=${encodeURIComponent(nick)}&avatar=${encodeURIComponent(selectedAvatar)}`;
+      window.location.href = `./game.html?room=${encodeURIComponent(room)}&nick=${encodeURIComponent(nick)}&avatar=${encodeURIComponent(selectedAvatar)}&isHost=false`;
     };
 
+    // Create room button
     document.getElementById('createHostBtn').onclick = () => {
       const code = generateCode();
-      window.location.href = `./host.html?room=${code}`;
+      const nick = getNickname();
+      window.location.href = `./game.html?room=${code}&nick=${encodeURIComponent(nick)}&avatar=${encodeURIComponent(selectedAvatar)}&isHost=true`;
     };
   </script>
 </body>

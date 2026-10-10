@@ -1,22 +1,23 @@
 /**
- * BrowserAudioEngine
- * Управляет микрофоном, разблокировкой звука в iOS Safari,
- * индикатором VU-метра и записью аудио через MediaRecorder API.
+ * audio-engine.js
+ * Управляет микрофоном, анимацией уровня децибел (диктофон),
+ * записью фрагмента и локальным предпрослушиванием (повтором записи).
  */
+
 export class BrowserAudioEngine {
   constructor() {
     this.audioContext = null;
     this.mediaStream = null;
     this.mediaRecorder = null;
     this.analyser = null;
-    this.animFrameId = null;
+    this.visAnimId = null;
     this.recordedChunks = [];
     this.selectedMimeType = '';
+    this.lastRecordedBlob = null;
+    this.lastAudioUrl = null;
+    this.previewAudioElement = null;
   }
 
-  /**
-   * Разблокировка WebKit AudioContext по тапу пользователя (iOS Safari requirement)
-   */
   async unlockAudio() {
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
     if (!this.audioContext) {
@@ -26,18 +27,13 @@ export class BrowserAudioEngine {
       await this.audioContext.resume();
     }
 
-    // Воспроизводим 1 семпл тишины для окончательного снятия мьюта
     const buffer = this.audioContext.createBuffer(1, 1, 22050);
     const source = this.audioContext.createBufferSource();
     source.buffer = buffer;
     source.connect(this.audioContext.destination);
     source.start(0);
-    console.log('[AudioEngine] AudioContext разблокирован, state:', this.audioContext.state);
   }
 
-  /**
-   * Выбор поддерживаемого формата записи (Opus WebM для Chrome/Firefox, MP4/AAC для Safari)
-   */
   resolveMimeType() {
     const candidates = [
       'audio/webm;codecs=opus',
@@ -54,11 +50,7 @@ export class BrowserAudioEngine {
     return '';
   }
 
-  /**
-   * Инициализация микрофона и VU-метра
-   * @param {function(number): void} onVolumeChange Callback уровня громкости от 0 до 100
-   */
-  async initMicrophone(onVolumeChange = null) {
+  async initMicrophone() {
     await this.unlockAudio();
 
     this.mediaStream = await navigator.mediaDevices.getUserMedia({
@@ -73,35 +65,107 @@ export class BrowserAudioEngine {
     });
 
     this.selectedMimeType = this.resolveMimeType();
-    console.log('[AudioEngine] Выбранный MIME тип:', this.selectedMimeType || 'браузерный по умолчанию');
 
-    if (onVolumeChange) {
-      const source = this.audioContext.createMediaStreamSource(this.mediaStream);
-      this.analyser = this.audioContext.createAnalyser();
-      this.analyser.fftSize = 256;
-      source.connect(this.analyser);
-
-      const dataArray = new Uint8Array(this.analyser.frequencyBinCount);
-      const updateMeter = () => {
-        if (!this.analyser) return;
-        this.analyser.getByteFrequencyData(dataArray);
-        let sum = 0;
-        for (let i = 0; i < dataArray.length; i++) {
-          sum += dataArray[i];
-        }
-        const avg = sum / dataArray.length;
-        const volumePercent = Math.min(100, Math.round((avg / 128) * 100));
-        onVolumeChange(volumePercent);
-        this.animFrameId = requestAnimationFrame(updateMeter);
-      };
-      updateMeter();
-    }
+    // Создаем AnalyserNode для анимации диктофона
+    const source = this.audioContext.createMediaStreamSource(this.mediaStream);
+    this.analyser = this.audioContext.createAnalyser();
+    this.analyser.fftSize = 64;
+    source.connect(this.analyser);
 
     return this.mediaStream;
   }
 
   /**
-   * Синхронная запись аудиодорожки по целевому таймстемпу клиента
+   * Запуск анимации изменения децибел диктофона на Canvas
+   * @param {HTMLCanvasElement} canvas
+   * @param {function(number): void} onVolumeChange Callback уровня громкости (0..100)
+   */
+  startDecibelVisualizer(canvas, onVolumeChange = null) {
+    if (!this.analyser || !canvas) return;
+
+    const ctx = canvas.getContext('2d');
+    const bufferLength = this.analyser.frequencyBinCount;
+    const dataArray = new Uint8Array(bufferLength);
+
+    const render = () => {
+      this.analyser.getByteFrequencyData(dataArray);
+
+      // Корректируем разрешение canvas под его фактический размер
+      const dpr = window.devicePixelRatio || 1;
+      const w = canvas.clientWidth;
+      const h = canvas.clientHeight;
+      if (canvas.width !== w * dpr || canvas.height !== h * dpr) {
+        canvas.width = w * dpr;
+        canvas.height = h * dpr;
+      }
+
+      ctx.save();
+      ctx.scale(dpr, dpr);
+      ctx.clearRect(0, 0, w, h);
+
+      // Фон диктофона
+      ctx.fillStyle = '#090D16';
+      ctx.fillRect(0, 0, w, h);
+
+      // Сетка/линии уровня
+      ctx.strokeStyle = '#1E293B';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(0, h * 0.5);
+      ctx.lineTo(w, h * 0.5);
+      ctx.stroke();
+
+      // Столбики диктофона
+      const barCount = 28;
+      const barWidth = (w - (barCount * 4)) / barCount;
+      let totalVolume = 0;
+
+      for (let i = 0; i < barCount; i++) {
+        // Берем сэмплы из частотного диапазона голоса
+        const dataIdx = Math.floor((i / barCount) * (bufferLength * 0.75));
+        const val = dataArray[dataIdx] || 0; // 0..255
+        totalVolume += val;
+
+        const normalizedHeight = Math.max(6, (val / 255) * (h - 16));
+        const x = 4 + i * (barWidth + 4);
+        const y = (h - normalizedHeight) / 2;
+
+        // Неоновый цвет по уровню децибел: зеленый -> желтый -> красный
+        if (val > 180) {
+          ctx.fillStyle = '#EF4444'; // Перегруз / пик
+        } else if (val > 90) {
+          ctx.fillStyle = '#F59E0B'; // Средний уровень
+        } else {
+          ctx.fillStyle = '#10B981'; // Норма
+        }
+
+        ctx.beginPath();
+        ctx.roundRect(x, y, barWidth, normalizedHeight, 3);
+        ctx.fill();
+      }
+
+      const avgVolume = Math.min(100, Math.round((totalVolume / (barCount * 128)) * 100));
+      if (onVolumeChange) {
+        onVolumeChange(avgVolume);
+      }
+
+      ctx.restore();
+      this.visAnimId = requestAnimationFrame(render);
+    };
+
+    if (this.visAnimId) cancelAnimationFrame(this.visAnimId);
+    render();
+  }
+
+  stopDecibelVisualizer() {
+    if (this.visAnimId) {
+      cancelAnimationFrame(this.visAnimId);
+      this.visAnimId = null;
+    }
+  }
+
+  /**
+   * Синхронная запись аудиодорожки
    */
   async recordScheduled(targetClientTimestampMs, durationMs) {
     if (!this.mediaStream) {
@@ -118,18 +182,14 @@ export class BrowserAudioEngine {
       }
     };
 
-    // Ожидаем наступления расчетного времени старта
     const now = performance.now() + performance.timeOrigin;
     const waitDelay = Math.max(0, targetClientTimestampMs - now);
-
     if (waitDelay > 0) {
       await new Promise((r) => setTimeout(r, waitDelay));
     }
 
     const actualStartTime = performance.now() + performance.timeOrigin;
     const actualStartDelayMs = Math.round(actualStartTime - targetClientTimestampMs);
-    console.log(`[AudioEngine] Запись начата. Задержка старта аппаратуры: ${actualStartDelayMs} ms`);
-
     this.mediaRecorder.start(100);
 
     return new Promise((resolve, reject) => {
@@ -139,53 +199,49 @@ export class BrowserAudioEngine {
             const blob = new Blob(this.recordedChunks, {
               type: this.selectedMimeType || 'audio/webm'
             });
-            console.log(`[AudioEngine] Запись завершена. Размер блоба: ${blob.size} байт`);
+
+            this.lastRecordedBlob = blob;
+            if (this.lastAudioUrl) URL.revokeObjectURL(this.lastAudioUrl);
+            this.lastAudioUrl = URL.createObjectURL(blob);
+
             resolve({
               blob,
+              audioUrl: this.lastAudioUrl,
               mimeType: this.selectedMimeType || 'audio/webm',
               actualStartDelayMs
             });
           };
           this.mediaRecorder.stop();
         } else {
-          reject(new Error('MediaRecorder был остановлен преждевременно'));
+          reject(new Error('MediaRecorder был остановлен'));
         }
       }, durationMs);
     });
   }
 
   /**
-   * Отправка аудио-блоба на сервер
+   * Локальный повтор записи (прослушать свой записанный голос)
    */
-  async uploadAudio(blob, roomCode, playerId) {
-    const formData = new FormData();
-    const ext = this.selectedMimeType.includes('mp4') ? '.mp4' : '.webm';
-    formData.append('file', blob, `rec_${playerId}${ext}`);
-    formData.append('roomCode', roomCode);
-    formData.append('playerId', playerId);
+  playLocalPreview() {
+    if (!this.lastAudioUrl) return;
 
-    const response = await fetch('/api/upload-audio', {
-      method: 'POST',
-      body: formData
-    });
-
-    if (!response.ok) {
-      throw new Error(`Ошибка загрузки аудио: ${response.statusText}`);
+    if (this.previewAudioElement) {
+      this.previewAudioElement.pause();
     }
-
-    const data = await response.json();
-    return data.audioUrl;
+    this.previewAudioElement = new Audio(this.lastAudioUrl);
+    this.previewAudioElement.play().catch(e => console.warn('Preview play error:', e));
   }
 
-  stopVolumeMeter() {
-    if (this.animFrameId) {
-      cancelAnimationFrame(this.animFrameId);
-      this.animFrameId = null;
+  stopLocalPreview() {
+    if (this.previewAudioElement) {
+      this.previewAudioElement.pause();
+      this.previewAudioElement = null;
     }
   }
 
   dispose() {
-    this.stopVolumeMeter();
+    this.stopDecibelVisualizer();
+    this.stopLocalPreview();
     if (this.mediaStream) {
       this.mediaStream.getTracks().forEach((track) => track.stop());
     }
