@@ -51,7 +51,7 @@ export class HostP2PManager {
       nickname: this.hostNickname,
       avatarId: this.hostAvatar,
       isHost: true,
-      micReady: true,
+      micReady: false,
       assignedFragment: null,
       hasAudio: false,
       audioArrayBuffer: null,
@@ -60,6 +60,14 @@ export class HostP2PManager {
       score: 0,
       votes: 0
     });
+  }
+
+  setHostMicReady(ready = true) {
+    const hostPlayer = this.players.get('host');
+    if (hostPlayer) {
+      hostPlayer.micReady = ready;
+      this.broadcastRoomState();
+    }
   }
 
   init() {
@@ -258,6 +266,12 @@ export class HostP2PManager {
   }
 
   startPreview(clip) {
+    const unready = Array.from(this.players.values()).filter(p => !p.micReady);
+    if (unready.length > 0) {
+      console.warn('[HostP2P] Не все игроки включили микрофон:', unready);
+      return { success: false, unready };
+    }
+
     this.stage = 'PREVIEW';
     this.currentClip = clip;
     const allPlayers = Array.from(this.players.values());

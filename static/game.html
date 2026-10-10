@@ -104,8 +104,13 @@
           </button>
         </div>
 
-        <div id="guestWaitingBox" class="text-center py-3 text-slate-400 text-sm">
-          ⏳ Ожидание выбора сценки и старта от хоста комнаты...
+        <div id="guestWaitingBox" class="text-center py-3 text-slate-400 text-sm space-y-2 hidden">
+          <div id="guestMicPromptWarning" class="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-xs text-amber-300 font-bold">
+            ⚠️ Обязательно нажмите кнопку «Включить микрофон» выше, иначе хост не сможет запустить игру!
+          </div>
+          <div class="text-xs text-slate-400">
+            ⏳ Ожидание выбора сценки и старта от хоста комнаты...
+          </div>
         </div>
       </div>
     </div>
@@ -363,6 +368,20 @@
       micReady: false
     }];
 
+    function updateStartRoundButtonState() {
+      if (!isHost) return;
+      const btn = document.getElementById('startRoundBtn');
+      if (!btn) return;
+      const unready = players.filter(p => !p.micReady);
+      if (unready.length === 0) {
+        btn.className = 'w-full py-4 bg-gradient-to-r from-emerald-600 to-indigo-600 hover:from-emerald-500 hover:to-indigo-500 text-white text-lg font-black rounded-xl shadow-xl transition transform active:scale-98 flex items-center justify-center gap-2 cursor-pointer';
+        btn.innerHTML = '<span>🎬</span> НАЧАТЬ ИГРУ (ВСЕ ГОТОВЫ!)';
+      } else {
+        btn.className = 'w-full py-4 bg-slate-800 border-2 border-dashed border-amber-500/50 hover:bg-slate-700/80 text-amber-300 font-bold text-sm md:text-base rounded-xl shadow-lg transition flex items-center justify-center gap-2 cursor-pointer';
+        btn.innerHTML = `<span>⚠️</span> Ожидаем микрофоны: ${players.length - unready.length}/${players.length} готовы`;
+      }
+    }
+
     function renderPlayers() {
       document.getElementById('playerCount').textContent = players.length;
       const list = document.getElementById('playersList');
@@ -373,15 +392,28 @@
         item.className = 'glass-card p-2.5 flex items-center gap-2 border-slate-800';
         item.innerHTML = `
           <span class="text-2xl">${p.avatarId || '🎙️'}</span>
-          <div class="truncate">
+          <div class="truncate flex-1">
             <div class="text-xs font-bold text-slate-200 truncate">${p.nickname} ${p.isHost ? '👑' : ''}</div>
-            <div class="text-[10px] ${p.micReady ? 'text-emerald-400' : 'text-amber-400'}">
-              ${p.micReady ? '✓ Микрофон готов' : '● Проверка...'}
+            <div class="text-[10px] font-semibold ${p.micReady ? 'text-emerald-400' : 'text-red-400'}">
+              ${p.micReady ? '✓ Микрофон готов' : '❌ Микрофон не включен'}
             </div>
           </div>
         `;
         list.appendChild(item);
       });
+
+      updateStartRoundButtonState();
+
+      const guestMicWarn = document.getElementById('guestMicPromptWarning');
+      if (guestMicWarn) {
+        if (isMicActive) {
+          guestMicWarn.className = 'p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-xs text-emerald-300 font-bold';
+          guestMicWarn.textContent = '✓ Ваш микрофон готов! Ждем готовности остальных игроков и запуска от хоста.';
+        } else {
+          guestMicWarn.className = 'p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-xs text-amber-300 font-bold';
+          guestMicWarn.textContent = '⚠️ Обязательно нажмите кнопку «Включить микрофон» выше, чтобы хост мог запустить игру!';
+        }
+      }
     }
     renderPlayers();
 
@@ -425,7 +457,9 @@
         renderPlayers();
 
         // Уведомляем сеть
-        if (!isHost && p2p) {
+        if (isHost && p2p) {
+          p2p.setHostMicReady(true);
+        } else if (!isHost && p2p) {
           p2p.send('client:player:mic_ready', { ready: true });
         }
       } catch (err) {
@@ -494,8 +528,14 @@
         p2p = new ClientP2PManager(roomCode, nickname, avatar);
         p2p.onStatusChange = (status) => {
           const dot = document.getElementById('netStatusDot');
-          if (status === 'connected') dot.className = 'w-3 h-3 rounded-full bg-emerald-500';
-          else dot.className = 'w-3 h-3 rounded-full bg-red-500 animate-pulse';
+          if (status === 'connected') {
+            dot.className = 'w-3 h-3 rounded-full bg-emerald-500';
+            if (isMicActive) {
+              p2p.send('client:player:mic_ready', { ready: true });
+            }
+          } else {
+            dot.className = 'w-3 h-3 rounded-full bg-red-500 animate-pulse';
+          }
         };
 
         p2p.on('server:room:state_update', (state) => {
@@ -567,7 +607,27 @@
 
     // 8. СТАРТ ИГРЫ (ХОСТ)
     document.getElementById('startRoundBtn').onclick = () => {
-      p2p.startPreview(currentClip);
+      // 1. Проверяем включил ли хост микрофон
+      if (!isMicActive) {
+        alert('⚠️ ОШИБКА: Вы (Хост) ещё не включили микрофон!\n\nНажмите кнопку «Включить микрофон» на панели диктофона сверху, чтобы игра могла начаться.');
+        document.getElementById('enableMicBtn').scrollIntoView({ behavior: 'smooth' });
+        return;
+      }
+
+      // 2. Проверяем остальных игроков комнаты
+      const unready = players.filter(p => !p.micReady);
+      if (unready.length > 0) {
+        const names = unready.map(p => `• ${p.nickname} ${p.isHost ? '(Вы)' : ''}`).join('\n');
+        alert(`⚠️ НЕЛЬЗЯ НАЧАТЬ ИГРУ!\n\nВсе участники должны включить микрофон перед началом раунда.\n\nЕщё не включили микрофон:\n${names}\n\nПопросите всех участников нажать «Включить микрофон» на своих экранах!`);
+        return;
+      }
+
+      const res = p2p.startPreview(currentClip);
+      if (res && res.success === false) {
+        const names = (res.unready || []).map(p => `• ${p.nickname}`).join('\n');
+        alert(`⚠️ Не все игроки включили микрофон:\n${names}`);
+        return;
+      }
     };
 
     function setupPreviewScreen() {
@@ -607,6 +667,10 @@
 
     // 9. ПЕРЕХОД К ЗАПИСИ
     document.getElementById('goToRecordingBtn').onclick = () => {
+      if (!isMicActive) {
+        alert('⚠️ ОШИБКА: Микрофон не включен! Нажмите «Включить микрофон».');
+        return;
+      }
       p2p.startRecording(3000);
       startRecordingFlow(
         performance.now() + performance.timeOrigin + 3000,
@@ -617,6 +681,18 @@
     };
 
     async function startRecordingFlow(startAtServerMs, totalDurationMs, countdownMs, fragments) {
+      if (!isMicActive) {
+        try {
+          await audioEngine.initMicrophone();
+          isMicActive = true;
+          document.getElementById('lobbyMicPlaceholder').classList.add('hidden');
+          document.getElementById('micStatusBadge').textContent = '✓ Микрофон активен';
+          document.getElementById('micStatusBadge').className = 'text-xs px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30';
+          players[0].micReady = true;
+        } catch (e) {
+          alert('⚠️ ВНИМАНИЕ: Микрофон не доступен! Разрешите доступ к микрофону в браузере для записи голоса.');
+        }
+      }
       switchStage('RECORDING');
       document.getElementById('recordingCountdownOverlay').classList.remove('hidden');
       document.getElementById('recordingLiveBooth').classList.add('hidden');
